@@ -159,7 +159,7 @@ Apify.main(async () => {
     Apify.events.on('migrating', data => Apify.setValue('STATE', state));
 
     // Check input
-    if(!input.search && !input.startUrls){
+    if(!(input.search && input.search.trim().length > 0) && !input.startUrls){
         throw new Error('Either "search" or "startUrls" attribute has to be set!');
     }
 
@@ -191,7 +191,7 @@ Apify.main(async () => {
     // Create RequestQueue
     const requestQueue = await Apify.openRequestQueue();
     if(input.search){
-        const term = encodeURIComponent(input.search);
+        const term = encodeURIComponent(input.search.trim());
         await requestQueue.addRequest({
             url: 'https://www.zillow.com/homes/' + term
         });
