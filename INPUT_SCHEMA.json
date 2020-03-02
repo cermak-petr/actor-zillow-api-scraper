@@ -1,0 +1,55 @@
+{
+    "title": "Firmy.cz actor input schema",
+    "type": "object",
+    "schemaVersion": 1,
+    "properties": {
+        "search": {
+            "title": "Search",
+            "type": "string",
+            "editor": "textfield",
+            "prefill": "Los Angeles",
+            "description": "Query to search on Zillow.com"
+        },
+        "startUrls": {
+            "title": "Start URLs",
+            "type": "array",
+            "editor": "requestListSources",
+            "description": "List of URLs that will be scraped or crawled. Can be main website URL, category/search URLs or detail/product URLs."
+        },
+        "maxLevel": {
+            "title": "Max zoom level",
+            "type": "integer",
+            "minimum": 0,
+            "prefill": 20,
+            "description": "Maximum map splitting level"
+        },
+        "maxItems": {
+            "title": "Max items",
+            "type": "integer",
+            "minimum": 1,
+            "prefill": 20,
+            "description": "Limit of home detail pages to be scraped"
+        },
+        "showFacts": {
+            "title": "Include home facts",
+            "type": "boolean",
+            "description": "Include all information from the facts section.",
+            "default": false
+        },
+        "extendOutputFunction": {
+            "title": "Extend output function",
+            "type": "string",
+            "editor": "javascript",
+            "description": "A function which result will get merged with the default result",
+            "prefill": "(data) => {\n    return {};\n}",
+            "sectionCaption": "Advanced options"
+        },
+        "proxyConfiguration": {
+            "title": "Proxy configuration",
+            "type": "object",
+            "editor": "proxy",
+            "description": "The best option is usually Automatic proxy. But you can also use your own proxies or no proxy",
+            "prefill": { "useApifyProxy": true }
+        }
+    }
+}
