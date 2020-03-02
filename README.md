@@ -16,7 +16,9 @@ The way it works is by accesing Zillow's internal API and recursively splitting 
 | search | string | Query string to be searched on the site | none |
 | startUrls | array | List of [Request](https://sdk.apify.com/docs/api/request#docsNav) objects that will be deeply crawled. The URL can be top level like `https://www.firmy.cz`, any category URL or company detail URL | none |
 | maxItems | number | Maximum number of pages that will be scraped | all found |
-| extendOutputFunction | string | Function that takes Zillow home data object ($) as argument and returns data that will be merged with the default output. More information in [Extend output function](#extend-output-function) | |
+| extendOutputFunction | string | Function that takes Zillow home data object ($) as argument and returns data that will be merged with the default output. More information in [Extend output function](#extend-output-function) | (data) => {
+    return {};
+} |
 | proxyConfiguration | object | Proxy settings of the run. If you have access to Apify proxy, leave the default settings. If not, you can set `{ "useApifyProxy": false" }` to disable proxy usage | `{ "useApifyProxy": true }`|
 
 ### Output
