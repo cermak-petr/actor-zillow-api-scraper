@@ -31,7 +31,7 @@ You can find example of an output [here](https://pastebin.com/P016j7ip).
 ### Compute units consumption
 Keep in mind that it is much more efficient to run one longer scrape (at least one minute) than more shorter ones because of the startup time.
 
-The average consumption is about **0.6 Compute units per 2000 results** scraped.
+The average consumption is about **1 Compute unit per 2000 results** scraped.
 
 ### Extend output function
 
