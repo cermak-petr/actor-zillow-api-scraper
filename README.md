@@ -14,7 +14,7 @@ The way it works is by accesing Zillow's internal API and recursively splitting 
 | Field | Type | Description | Default value
 | ----- | ---- | ----------- | -------------|
 | search | string | Query string to be searched on the site | none |
-| startUrls | array | List of [Request](https://sdk.apify.com/docs/api/request#docsNav) objects that will be deeply crawled. The URL can be top level like `https://www.firmy.cz`, any category URL or company detail URL | none |
+| startUrls | array | List of [Request](https://sdk.apify.com/docs/api/request#docsNav) objects that will be deeply crawled. The URL can be any Zillow.com home list page | none |
 | maxItems | number | Maximum number of pages that will be scraped | 200 |
 | maxLevel | number | Maximum map splitting level | 20 |
 | extendOutputFunction | string | Function that takes Zillow home data object ($) as argument and returns data that will be merged with the default output. More information in [Extend output function](#extend-output-function) | (data) => {return {};} |
