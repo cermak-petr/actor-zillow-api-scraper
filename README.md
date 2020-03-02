@@ -1,4 +1,4 @@
-### Zillow.com Scraper
+### Zillow Scraper
 
 Zillow Scraper is an [Apify actor](https://apify.com/actors) for extracting data about homes from [Zillow.com](https://zillow.com). It allows you to search homes in any location and extract detailed information about each one. It is build on top of [Apify SDK](https://sdk.apify.com/) and you can run it both on [Apify platform](https://my.apify.com) and locally.  
   
