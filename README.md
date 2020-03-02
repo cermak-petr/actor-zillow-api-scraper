@@ -34,7 +34,7 @@ The average consumption is about **0.6 Compute units per 2000 results** scraped.
 
 ### Extend output function
 
-You can use this function to update the default output of this actor. This function gets Zillow internal home data object as an argument, so you can choose which other attributes you would like to add. The output from this will function will get merged with the default output.
+You can use this function to update the default output of this actor. This function gets Zillow internal home data object as an argument, so you can choose which other attributes you would like to add. The output from this function will get merged with the default output.
   
 The internal home object contains huge amounts of data - [example](https://pastebin.com/kiWayJvs)  
 Any of these attributes can be added to the result object.
@@ -58,5 +58,5 @@ You can return fields to achieve 3 different things:
 This example will add a new field `schools`, change the `homeStatus` field and remove the `address` field
 
 ### Epilogue
-Thank you for trying my actor. You can send any feedback you have to my email `petr.cermak@apify.com`.  
+Thank you for trying my actor. You can send any feedback you have to my email `cermak.petr6@gmail.com`.  
 If you find any bug, please create an issue on the [Github page](https://github.com/cermak-petr/actor-zillow-api-scraper).
