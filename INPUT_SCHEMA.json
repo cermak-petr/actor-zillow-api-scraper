@@ -27,7 +27,7 @@
             "title": "Max items",
             "type": "integer",
             "minimum": 1,
-            "prefill": 20,
+            "prefill": 200,
             "description": "Limit of home detail pages to be scraped"
         },
         "showFacts": {
