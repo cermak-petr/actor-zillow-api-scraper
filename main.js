@@ -261,7 +261,7 @@ Apify.main(async () => {
                             await requestQueue.addRequest({
                                 url: request.url,
                                 uniqueKey: Math.random() + '',
-                                userData: Object.assign(request.userData, {start: i});
+                                userData: Object.assign(request.userData, {start: i})
                             });
                             return;
                         }
