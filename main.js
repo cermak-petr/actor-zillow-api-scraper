@@ -263,6 +263,7 @@ Apify.main(async () => {
                                 uniqueKey: Math.random() + '',
                                 userData: Object.assign(request.userData, {start: i});
                             });
+                            return;
                         }
                     }
                 }
