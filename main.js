@@ -64,7 +64,7 @@ const getSampleQueryId = async (lpOptions) => {
             return result;
         }
         catch(e){
-            console.log('Initial settings extraction failed, retrying...');
+            console.log('Initial settings extraction in progress...');
             await Apify.setValue('queryid-error.html', await page.content(), {contentType: 'text/html'});
             await page.close();
         }
@@ -258,7 +258,7 @@ Apify.main(async () => {
             }
             // Split map and enqueue sub-rectangles
             else{
-                console.log('Found more that 500 homes, splitting map...');
+                console.log('Found more than 500 homes, splitting map...');
                 const states = splitQueryState(qs);
                 for(const state of states){
                     await requestQueue.addRequest({
