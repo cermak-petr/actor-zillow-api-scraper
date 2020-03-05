@@ -227,13 +227,19 @@ Apify.main(async () => {
 
             // Get initial searchState
             let qs = request.userData.queryState;
-            if(!qs){qs = await page.evaluate(getInitialQueryState);}
-            const searchState = await page.evaluate(queryRegionHomes, qs);
+            try{
+                if(!qs){qs = await page.evaluate(getInitialQueryState);}
+                const searchState = await page.evaluate(queryRegionHomes, qs);
+            }
+            catch(e){
+                await puppeteerPool.retire(page.browser());
+                throw 'Unable to get searchState, retrying...';
+            }
             
             // Check mapResults
             const mapResults = searchState.searchResults.mapResults;
             console.log('Searching homes at ' + JSON.stringify(qs.mapBounds));
-            if(!mapResults){throw new Error('No map results at ' + JSON.stringify(qs.mapBounds));}
+            if(!mapResults){throw 'No map results at ' + JSON.stringify(qs.mapBounds);}
 
             // Extract home data from mapResults
             if(mapResults.length < 500 || (input.maxLevel && (request.userData.splitCount || 0) >= input.maxLevel)){
