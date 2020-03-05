@@ -17,7 +17,7 @@ The way it works is by accesing Zillow's internal API and recursively splitting 
 | startUrls | array | List of [Request](https://sdk.apify.com/docs/api/request#docsNav) objects that will be deeply crawled. The URL can be any Zillow.com home list page | none |
 | maxItems | number | Maximum number of pages that will be scraped | 200 |
 | maxLevel | number | Maximum map splitting level | 20 |
-| showFacts | boolean | Toggle whether the "homeFacts" attribute will be included | false |
+| simple | boolean | Toggle whether simplified results will be returned | true |
 | extendOutputFunction | string | Function that takes Zillow home data object ($) as argument and returns data that will be merged with the default output. More information in [Extend output function](#extend-output-function) | `(data) => { return {}; }` |
 | proxyConfiguration | object | Proxy settings of the run. If you have access to Apify proxy, leave the default settings. If not, you can set `{ "useApifyProxy": false" }` to disable proxy usage | `{ "useApifyProxy": true }`|  
 
@@ -26,7 +26,55 @@ Either the `search` or `startUrls` atrribute has to be set.
 ### Output
 
 Output is stored in a dataset. Each item is information about a home.
-You can find example of an output [here](https://pastebin.com/P016j7ip).
+If the `simple` attribute is set, an example result may look like this:
+```
+{
+  "address": {
+    "streetAddress": "23840 Hartland St",
+    "city": "West Hills",
+    "state": "CA",
+    "zipcode": "91307",
+    "neighborhood": "West Hills",
+    "community": null,
+    "subdivision": null
+  },
+  "bedrooms": 3,
+  "bathrooms": 2,
+  "price": 725000,
+  "yearBuilt": 1960,
+  "longitude": -118.645963,
+  "latitude": 34.194123,
+  "description": "Incredible opportunity to transform this wonderful home into your picture of perfection. Situated in a terrific neighborhood, this 3 bedroom, 2 bathroom home is ready for a makeover. Living room, family room with fireplace, dining room, kitchen and master bedroom. It also has a 2 car garage with plenty of room for additional parking. Located close to fantastic restaurants, shopping and transportation make this a must see property. Sold as-is.",
+  "livingArea": 1744,
+  "currency": "USD",
+  "hdpUrl": "/homedetails/23840-Hartland-St-West-Hills-CA-91307/19874958_zpid/",
+  "photos": [
+    {
+      "url": "https://photos.zillowstatic.com/p_f/ISj3uk8gmq0lpl0000000000.jpg"
+    },
+    {
+      "url": "https://photos.zillowstatic.com/p_f/ISn2oqx0ov8rcm0000000000.jpg"
+    },
+    {
+      "url": "https://photos.zillowstatic.com/p_f/ISzbz2uwcvu1xl0000000000.jpg"
+    },
+    {
+      "url": "https://photos.zillowstatic.com/p_f/ISfwlefujn0ucm0000000000.jpg"
+    },
+    {
+      "url": "https://photos.zillowstatic.com/p_f/ISr5xqbq8nm4xl0000000000.jpg"
+    },
+    {
+      "url": "https://photos.zillowstatic.com/p_f/IS7mwhqtpbn83n0000000000.jpg"
+    },
+    {
+      "url": "https://photos.zillowstatic.com/p_f/IS7qj2xnffswcm0000000000.jpg"
+    }
+  ]
+}
+```
+If the `simple` attribute is not set, the result will contain many more attributes.
+You can find example of a full result [here](https://pastebin.com/P016j7ip).
 
 ### Compute units consumption
 Keep in mind that it is much more efficient to run one longer scrape (at least one minute) than more shorter ones because of the startup time.
