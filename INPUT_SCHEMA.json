@@ -30,11 +30,11 @@
             "prefill": 200,
             "description": "Limit of home detail pages to be scraped"
         },
-        "showFacts": {
-            "title": "Include home facts",
+        "simple": {
+            "title": "Simple results",
             "type": "boolean",
-            "description": "Include all information from the facts section.",
-            "default": false
+            "description": "Return only a subset of possible result attributes.",
+            "default": true
         },
         "extendOutputFunction": {
             "title": "Extend output function",
