@@ -142,8 +142,12 @@ const getSimpleResult = (data) => {
     for(const key in attributes){
         if(data[key]){result[key] = data[key];}
     }
+    if(result.hdpUrl){
+        result.url = 'https://www.zillow.com' + result.hdpUrl;
+        delete result.hdpUrl;
+    }
     if(result.hugePhotos){
-        result.photos = result.hugePhotos.map(hp => {return {url: hp.url}});
+        result.photos = result.hugePhotos.map(hp => hp.url);
         delete result.hugePhotos;
     }
     return result;
