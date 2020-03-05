@@ -134,7 +134,7 @@ const queryZpid = async (zpid, queryId) => {
 };
 
 // Allowed home data attributes
-const attributes = {"datePosted":true,"isZillowOwned":true,"priceHistory":true,"zpid":true,"homeStatus":true,"address":true,"bedrooms":true,"bathrooms":true,"price":true,"yearBuilt":true,"isPremierBuilder":true,"longitude":true,"latitude":true,"description":true,"primaryPublicVideo":true,"tourViewCount":true,"postingContact":true,"unassistedShowing":true,"livingArea":true,"currency":true,"homeType":true,"comingSoonOnMarketDate":true,"timeZone":true,"hdpUrl":true,"newConstructionType":true,"moveInReady":true,"moveInCompletionDate":true,"hugePhotos":true,"lastSoldPrice":true,"contingentListingType":true,"zestimate":true,"zestimateLowPercent":true,"zestimateHighPercent":true,"rentZestimate":true,"restimateLowPercent":true,"restimateHighPercent":true,"solarPotential":true,"brokerId":true,"parcelId":true,"homeFacts":true,"taxAssessedValue":true,"taxAssessedYear":true,"isPreforeclosureAuction":true,"listingProvider":true,"marketingName":true,"building":true,"priceChange":true,"datePriceChanged":true,"dateSold":true,"lotSize":true,"hoaFee":true,"mortgageRates":true,"propertyTaxRate":true,"whatILove":true,"isFeatured":true,"isListedByOwner":true,"isCommunityPillar":true,"pageViewCount":true,"favoriteCount":true,"openHouseSchedule":true,"brokerageName":true,"taxHistory":true,"abbreviatedAddress":true,"ownerAccount":true,"isRecentStatusChange":true,"isNonOwnerOccupied":true,"buildingId":true,"daysOnZillow":true,"rentalApplicationsAcceptedType":true,"buildingPermits":true,"highlights":true,"tourEligibility":true};
+let attributes = {"datePosted":true,"isZillowOwned":true,"priceHistory":true,"zpid":true,"homeStatus":true,"address":true,"bedrooms":true,"bathrooms":true,"price":true,"yearBuilt":true,"isPremierBuilder":true,"longitude":true,"latitude":true,"description":true,"primaryPublicVideo":true,"tourViewCount":true,"postingContact":true,"unassistedShowing":true,"livingArea":true,"currency":true,"homeType":true,"comingSoonOnMarketDate":true,"timeZone":true,"hdpUrl":true,"newConstructionType":true,"moveInReady":true,"moveInCompletionDate":true,"hugePhotos":true,"lastSoldPrice":true,"contingentListingType":true,"zestimate":true,"zestimateLowPercent":true,"zestimateHighPercent":true,"rentZestimate":true,"restimateLowPercent":true,"restimateHighPercent":true,"solarPotential":true,"brokerId":true,"parcelId":true,"homeFacts":true,"taxAssessedValue":true,"taxAssessedYear":true,"isPreforeclosureAuction":true,"listingProvider":true,"marketingName":true,"building":true,"priceChange":true,"datePriceChanged":true,"dateSold":true,"lotSize":true,"hoaFee":true,"mortgageRates":true,"propertyTaxRate":true,"whatILove":true,"isFeatured":true,"isListedByOwner":true,"isCommunityPillar":true,"pageViewCount":true,"favoriteCount":true,"openHouseSchedule":true,"brokerageName":true,"taxHistory":true,"abbreviatedAddress":true,"ownerAccount":true,"isRecentStatusChange":true,"isNonOwnerOccupied":true,"buildingId":true,"daysOnZillow":true,"rentalApplicationsAcceptedType":true,"buildingPermits":true,"highlights":true,"tourEligibility":true};
 
 // Simplify received home data
 const getSimpleResult = (data) => {
@@ -180,8 +180,10 @@ Apify.main(async () => {
         }
     }
 
-    // Toggle showing of home facts
-    if(!input.showFacts){delete attributes.homeFacts;}
+    // Toggle showing only a subset of result attriutes
+    if(input.simple){
+        attributes = {"address":true,"bedrooms":true,"bathrooms":true,"price":true,"yearBuilt":true,"longitude":true,"latitude":true,"description":true,"livingArea":true,"currency":true,"hdpUrl":true,"hugePhotos":true};
+    }
 
     // Intercept sample QueryID
     console.log('Extracting initial settings...');
