@@ -238,7 +238,10 @@ Apify.main(async () => {
             // Extract home data from mapResults
             if(mapResults.length < 500 || (input.maxLevel && (request.userData.splitCount || 0) >= input.maxLevel)){
                 console.log('Found ' + mapResults.length + ' homes, extracting data...');
-                for(const home of mapResults){
+                const start = request.userData.start || 0;
+                if(start){console.log('Starting at ' + start);}
+                for(let i = start; i < mapResults.length; i++){
+                    const home = mapResults[i];
                     if(home.zpid && !state.extractedZpids[home.zpid]){
                         try{
                             const homeData = await page.evaluate(queryZpid, home.zpid, queryId);
@@ -252,7 +255,15 @@ Apify.main(async () => {
                                 return process.exit(0);
                             }
                         }
-                        catch(e){console.log('Data extraction failed - zpid: ' + home.zpid);}
+                        catch(e){
+                            console.log('Data extraction failed - zpid: ' + home.zpid);
+                            await puppeteerPool.retire(page.browser());
+                            await requestQueue.addRequest({
+                                url: request.url,
+                                uniqueKey: Math.random() + '',
+                                userData: Object.assign(request.userData, {start: i});
+                            });
+                        }
                     }
                 }
             }
