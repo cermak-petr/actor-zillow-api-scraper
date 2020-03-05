@@ -226,10 +226,10 @@ Apify.main(async () => {
             }
 
             // Get initial searchState
-            let qs = request.userData.queryState;
+            let qs = request.userData.queryState, searchState;
             try{
                 if(!qs){qs = await page.evaluate(getInitialQueryState);}
-                const searchState = await page.evaluate(queryRegionHomes, qs);
+                searchState = await page.evaluate(queryRegionHomes, qs);
             }
             catch(e){
                 await puppeteerPool.retire(page.browser());
