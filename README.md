@@ -6,6 +6,7 @@ The way it works is by accesing Zillow's internal API and recursively splitting 
 
 - [Input](#input)
 - [Output](#output)
+- [Map splitting](#map-splitting)
 - [Compute units consumption](#compute-units-consumption)
 - [Extend output function](#extend-output-function)
 
@@ -13,7 +14,7 @@ The way it works is by accesing Zillow's internal API and recursively splitting 
 
 | Field | Type | Description | Default value
 | ----- | ---- | ----------- | -------------|
-| search | string | Query string to be searched on the site | none |
+| search | string | Query string to be searched on the site | `"Los Angeles"` |
 | startUrls | array | List of [Request](https://sdk.apify.com/docs/api/request#docsNav) objects that will be deeply crawled. The URL can be any Zillow.com home list page | none |
 | maxItems | number | Maximum number of pages that will be scraped | 200 |
 | maxLevel | number | Maximum map splitting level | 20 |
@@ -75,6 +76,9 @@ If the `simple` attribute is set, an example result may look like this:
 ```
 If the `simple` attribute is not set, the result will contain many more attributes.
 You can find example of a full result [here](https://pastebin.com/P016j7ip).
+
+### Map splitting
+To overcome the limit of 500 results per page, the crawler uses Zillow's internal API to search for homes on a rectangular section of a map. If the number of results on the map is higher than 500, the map is split into 4 quadrants and zoomed. Each of these quadrants is searched for homes and can again contain 500 results (that means using 1 split, we've increased the total result limit to 2000). Unless the result count in the quadrant is less than 500 (no need to split anymore), the quadrant is split again and so on. To limit this behavior, you can set the `maxLevel` attribute. That way, the map will be split only a maximum of `maxLevel` times, even if the number of results is higher than 500.
 
 ### Compute units consumption
 Keep in mind that it is much more efficient to run one longer scrape (at least one minute) than more shorter ones because of the startup time.
