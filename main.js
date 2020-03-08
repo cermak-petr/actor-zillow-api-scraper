@@ -166,6 +166,9 @@ Apify.main(async () => {
     if(!(input.search && input.search.trim().length > 0) && !input.startUrls){
         throw new Error('Either "search" or "startUrls" attribute has to be set!');
     }
+    
+    // Initialize minimum time
+    const minTime = input.minDate ? new Date(input.minDate).getTime() : null;
 
     // Create launchPuppeteerOptions
     const lpOptions = input.proxyConfiguration || {useApifyProxy: true};
@@ -255,6 +258,7 @@ Apify.main(async () => {
                     if(home.zpid && !state.extractedZpids[home.zpid]){
                         try{
                             const homeData = await page.evaluate(queryZpid, home.zpid, queryId);
+                            if(minTime && homeData.data.property.datePosted < minTime){return;}
                             const result = getSimpleResult(homeData.data.property);
                             if(extendOutputFunction){
                                 Object.assign(result, await extendOutputFunction(homeData.data));
