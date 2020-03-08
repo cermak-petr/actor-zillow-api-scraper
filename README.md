@@ -31,46 +31,30 @@ If the `simple` attribute is set, an example result may look like this:
 ```
 {
   "address": {
-    "streetAddress": "23840 Hartland St",
-    "city": "West Hills",
-    "state": "CA",
-    "zipcode": "91307",
-    "neighborhood": "West Hills",
+    "streetAddress": "312 N Kendall Ave APT B",
+    "city": "Kalamazoo",
+    "state": "MI",
+    "zipcode": "49006",
+    "neighborhood": "Westwood",
     "community": null,
     "subdivision": null
   },
-  "bedrooms": 3,
-  "bathrooms": 2,
-  "price": 725000,
-  "yearBuilt": 1960,
-  "longitude": -118.645963,
-  "latitude": 34.194123,
-  "description": "Incredible opportunity to transform this wonderful home into your picture of perfection. Situated in a terrific neighborhood, this 3 bedroom, 2 bathroom home is ready for a makeover. Living room, family room with fireplace, dining room, kitchen and master bedroom. It also has a 2 car garage with plenty of room for additional parking. Located close to fantastic restaurants, shopping and transportation make this a must see property. Sold as-is.",
-  "livingArea": 1744,
+  "bedrooms": 6,
+  "bathrooms": 3.5,
+  "price": 300,
+  "longitude": -85.626183,
+  "latitude": 42.29457,
+  "description": "Rent: $300.00/bed Student Housing. This is a 3-unit complex within close proximity to WMU consisting of 6 bedrooms and 3.5 baths throughout three levels in each unit. The main level features 1 of the 6 bedrooms, 1/2 bath, a roomy living room, kitchen with an eating area, and entry to your private deck. The upper level features 3 bedrooms, 2 full baths and a laundry area with a full size washer and dryer. The lower level features 2 bedrooms, 1 full bath and a bonus 2nd living area to use for socializing, gaming, studying, etc. All bedrooms are good-size and privately keyed. trash, lawn and snow plowing services included. Pet friendly with prior management approval and pet rent. Cats Allowed\nOven\nParking\nResident Pays Electricity\nResident Pays Gas\nResident Pays Water\nSmall Dogs Allowed\nSmoke Free\nTrash Pick Up Included\nUnfurnished\nWasher & Dryer",
+  "livingArea": 2236,
   "currency": "USD",
-  "hdpUrl": "/homedetails/23840-Hartland-St-West-Hills-CA-91307/19874958_zpid/",
+  "url": "https://www.zillow.com/homedetails/312-N-Kendall-Ave-APT-B-Kalamazoo-MI-49006/2096316908_zpid/",
   "photos": [
-    {
-      "url": "https://photos.zillowstatic.com/p_f/ISj3uk8gmq0lpl0000000000.jpg"
-    },
-    {
-      "url": "https://photos.zillowstatic.com/p_f/ISn2oqx0ov8rcm0000000000.jpg"
-    },
-    {
-      "url": "https://photos.zillowstatic.com/p_f/ISzbz2uwcvu1xl0000000000.jpg"
-    },
-    {
-      "url": "https://photos.zillowstatic.com/p_f/ISfwlefujn0ucm0000000000.jpg"
-    },
-    {
-      "url": "https://photos.zillowstatic.com/p_f/ISr5xqbq8nm4xl0000000000.jpg"
-    },
-    {
-      "url": "https://photos.zillowstatic.com/p_f/IS7mwhqtpbn83n0000000000.jpg"
-    },
-    {
-      "url": "https://photos.zillowstatic.com/p_f/IS7qj2xnffswcm0000000000.jpg"
-    }
+    "https://photos.zillowstatic.com/p_f/IS3f0lgq5a0cxn0000000000.jpg",
+    "https://photos.zillowstatic.com/p_f/ISzvuwdfl85g7p0000000000.jpg",
+    "https://photos.zillowstatic.com/p_f/ISrpskv8h0xi7p0000000000.jpg",
+    "https://photos.zillowstatic.com/p_f/ISjjq8d2dsol7p0000000000.jpg",
+    "https://photos.zillowstatic.com/p_f/ISbdowuv8kgo7p0000000000.jpg",
+    "https://photos.zillowstatic.com/p_f/IS3zfi07y70jap0000000000.jpg"
   ]
 }
 ```
