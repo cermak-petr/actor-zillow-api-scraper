@@ -30,6 +30,12 @@
             "prefill": 200,
             "description": "Limit of home detail pages to be scraped"
         },
+        "minDate": {
+            "title": "Min date",
+            "type": "string",
+            "editor": "textfield",
+            "description": "Oldest date allowed in results"
+        },
         "simple": {
             "title": "Simple results",
             "type": "boolean",
