@@ -168,7 +168,7 @@ Apify.main(async () => {
     }
     
     // Initialize minimum time
-    const minTime = input.minDate ? new Date(input.minDate).getTime() : null;
+    const minTime = input.minDate ? (parseInt(input.minDate) || new Date(input.minDate).getTime()) : null;
 
     // Create launchPuppeteerOptions
     const lpOptions = input.proxyConfiguration || {useApifyProxy: true};
