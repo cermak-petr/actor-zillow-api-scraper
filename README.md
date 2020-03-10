@@ -18,6 +18,7 @@ The way it works is by accesing Zillow's internal API and recursively splitting 
 | startUrls | array | List of [Request](https://sdk.apify.com/docs/api/request#docsNav) objects that will be deeply crawled. The URL can be any Zillow.com home list page | none |
 | maxItems | number | Maximum number of pages that will be scraped | 200 |
 | maxLevel | number | Maximum map splitting level | 20 |
+| minDate | string | Minimum date of the results allowed (timestamp or date string) | none | 
 | simple | boolean | Toggle whether simplified results will be returned | true |
 | extendOutputFunction | string | Function that takes Zillow home data object ($) as argument and returns data that will be merged with the default output. More information in [Extend output function](#extend-output-function) | `(data) => { return {}; }` |
 | proxyConfiguration | object | Proxy settings of the run. If you have access to Apify proxy, leave the default settings. If not, you can set `{ "useApifyProxy": false" }` to disable proxy usage | `{ "useApifyProxy": true }`|  
