@@ -201,8 +201,9 @@ Apify.main(async () => {
     const requestQueue = await Apify.openRequestQueue();
     if(input.search){
         const term = encodeURIComponent(input.search.trim());
+        const baseUrl = 'https://www.zillow.com/homes/';
         await requestQueue.addRequest({
-            url: 'https://www.zillow.com/homes/' + term
+            url: baseUrl + term + (input.type === 'rent' ? 'rentals/' : '')
         });
     }
     if(input.startUrls){
