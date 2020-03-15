@@ -203,7 +203,7 @@ Apify.main(async () => {
         const term = encodeURIComponent(input.search.trim());
         const baseUrl = 'https://www.zillow.com/homes/';
         await requestQueue.addRequest({
-            url: baseUrl + term + (input.type === 'rent' ? 'rentals/' : '')
+            url: baseUrl + term + (input.type === 'rent' ? '/rentals' : '')
         });
     }
     if(input.startUrls){
