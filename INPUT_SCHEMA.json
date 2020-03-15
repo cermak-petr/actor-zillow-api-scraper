@@ -10,6 +10,20 @@
             "prefill": "Los Angeles",
             "description": "Query to search on Zillow.com"
         },
+        "type": {
+            "title": "Type",
+            "type": "string",
+            "description": "Property for sale/rent",
+            "default": "sale",
+            "enum": [
+                "sale",
+                "rent"
+            ],
+            "enumTitles": [
+                "For sale",
+                "For rent"
+            ]
+        },
         "startUrls": {
             "title": "Start URLs",
             "type": "array",
