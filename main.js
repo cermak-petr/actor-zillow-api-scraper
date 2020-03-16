@@ -64,7 +64,7 @@ const getSampleQueryId = async (lpOptions) => {
             return result;
         }
         catch(e){
-            console.log('Initial settings extraction in progress...');
+            console.log('Settings extraction in progress...');
             await Apify.setValue('queryid-error.html', await page.content(), {contentType: 'text/html'});
             await page.close();
         }
@@ -99,8 +99,7 @@ const splitQueryState = queryState => {
 // Make API query for all ZPIDs in map reqion
 const queryRegionHomes = async (queryState, rent) => {
     if(rent){
-        if(!qs.filterState){qs.filterState = {};}
-        qs.filterState.isForRent = {value: true};
+        queryState.filterState = {"isForSaleByAgent":{"value":false},"isForSaleByOwner":{"value":false},"isNewConstruction":{"value":false},"isForSaleForeclosure":{"value":false},"isComingSoon":{"value":false},"isAuction":{"value":false},"isPreMarketForeclosure":{"value":false},"isPreMarketPreForeclosure":{"value":false},"isForRent":{"value":true}};
     }
     const qsParam = encodeURIComponent(JSON.stringify(queryState));
     const resp = await fetch('https://www.zillow.com/search/GetSearchPageState.htm?searchQueryState=' + qsParam);
@@ -243,7 +242,6 @@ Apify.main(async () => {
             try{
                 if(!qs){qs = await page.evaluate(getInitialQueryState);}
                 searchState = await page.evaluate(queryRegionHomes, qs, input.type === 'rent');
-                await Apify.setValue('queryState', qs);
             }
             catch(e){
                 await puppeteerPool.retire(page.browser());
