@@ -291,7 +291,7 @@ Apify.main(async () => {
             }
             // Split map and enqueue sub-rectangles
             else{
-                console.log('Found more than 500 homes, splitting map...');
+                console.log('Found more than ' + thr + ' homes, splitting map...');
                 const states = splitQueryState(qs);
                 for(const state of states){
                     await requestQueue.addRequest({
