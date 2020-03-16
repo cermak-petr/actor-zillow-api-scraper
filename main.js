@@ -239,6 +239,7 @@ Apify.main(async () => {
             try{
                 if(!qs){qs = await page.evaluate(getInitialQueryState);}
                 searchState = await page.evaluate(queryRegionHomes, qs);
+                await Apify.setValue('queryState', qs);
             }
             catch(e){
                 await puppeteerPool.retire(page.browser());
