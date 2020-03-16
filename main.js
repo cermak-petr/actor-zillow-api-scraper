@@ -200,7 +200,8 @@ Apify.main(async () => {
     // Create RequestQueue
     const requestQueue = await Apify.openRequestQueue();
     if(input.search){
-        const term = encodeURIComponent(input.search.trim());
+        const term = input.search.trim().replace(/,(\s*)/g,'-').replace(/\s+/, '+').toLowerCase();
+        //const term = encodeURIComponent(input.search.trim());
         const baseUrl = 'https://www.zillow.com/homes/';
         await requestQueue.addRequest({
             url: baseUrl + term + (input.type === 'rent' ? '/rentals' : '')
