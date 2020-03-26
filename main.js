@@ -264,7 +264,7 @@ Apify.main(async () => {
                     if(home.zpid && !state.extractedZpids[home.zpid]){
                         try{
                             const homeData = await page.evaluate(queryZpid, home.zpid, queryId);
-                            if(minTime && homeData.data.property.datePosted < minTime){return;}
+                            if(minTime && homeData.data.property.datePosted <= minTime){return;}
                             const result = getSimpleResult(homeData.data.property);
                             if(extendOutputFunction){
                                 try{Object.assign(result, await extendOutputFunction(homeData.data));}
