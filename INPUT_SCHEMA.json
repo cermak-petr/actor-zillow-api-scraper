@@ -17,10 +17,12 @@
             "default": "sale",
             "enum": [
                 "sale",
+                "fsbo",
                 "rent"
             ],
             "enumTitles": [
                 "For sale",
+                "For sale by owner",
                 "For rent"
             ]
         },
