@@ -97,9 +97,12 @@ const splitQueryState = queryState => {
 };
 
 // Make API query for all ZPIDs in map reqion
-const queryRegionHomes = async (queryState, rent) => {
-    if(rent){
+const queryRegionHomes = async (queryState, type) => {
+    if(type === 'rent'){
         queryState.filterState = {"isForSaleByAgent":{"value":false},"isForSaleByOwner":{"value":false},"isNewConstruction":{"value":false},"isForSaleForeclosure":{"value":false},"isComingSoon":{"value":false},"isAuction":{"value":false},"isPreMarketForeclosure":{"value":false},"isPreMarketPreForeclosure":{"value":false},"isForRent":{"value":true}};
+    }
+    else if(type === 'fsbo'){
+        queryState.filterState = {"isForSaleByAgent":{"value":false},"isForSaleByOwner":{"value":true},"isNewConstruction":{"value":false},"isForSaleForeclosure":{"value":false},"isComingSoon":{"value":false},"isAuction":{"value":false},"isPreMarketForeclosure":{"value":false},"isPreMarketPreForeclosure":{"value":false},"isForRent":{"value":false}};
     }
     const qsParam = encodeURIComponent(JSON.stringify(queryState));
     const resp = await fetch('https://www.zillow.com/search/GetSearchPageState.htm?searchQueryState=' + qsParam);
@@ -241,7 +244,7 @@ Apify.main(async () => {
             let qs = request.userData.queryState, searchState;
             try{
                 if(!qs){qs = await page.evaluate(getInitialQueryState);}
-                searchState = await page.evaluate(queryRegionHomes, qs, input.type === 'rent');
+                searchState = await page.evaluate(queryRegionHomes, qs, input.type);
             }
             catch(e){
                 await puppeteerPool.retire(page.browser());
