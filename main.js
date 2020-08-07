@@ -261,7 +261,7 @@ Apify.main(async () => {
 
             // Extract home data from mapResults
             const thr = input.splitThreshold || 500;
-            if(mapResults.length < thr || (input.maxLevel && (request.userData.splitCount || 0) >= input.maxLevel)){
+            if(mapResults.length < thr || input.maxLevel === 0 || (input.maxLevel && (request.userData.splitCount || 0) >= input.maxLevel)){
                 console.log('Found ' + mapResults.length + ' homes, extracting data...');
                 const start = request.userData.start || 0;
                 if(start){console.log('Starting at ' + start);}
