@@ -207,14 +207,14 @@ Apify.main(async () => {
     console.log('Initial settings extracted.');
 
     // Create RequestQueue
+    let startUrl = null;
     const requestQueue = await Apify.openRequestQueue();
     if(input.search){
         const term = input.search.trim().replace(/,(\s*)/g,'-').replace(/\s+/, '+').toLowerCase();
         //const term = encodeURIComponent(input.search.trim());
         const baseUrl = 'https://www.zillow.com/homes/';
-        await requestQueue.addRequest({
-            url: baseUrl + term + (input.type === 'rent' ? '/rentals' : '')
-        });
+        startUrl = baseUrl + term + (input.type === 'rent' ? '/rentals' : '');
+        await requestQueue.addRequest({url: startUrl});
     }
     if(input.startUrls){
         for(const sUrl of input.startUrls){
@@ -301,7 +301,7 @@ Apify.main(async () => {
                 const states = splitQueryState(qs);
                 for(const state of states){
                     await requestQueue.addRequest({
-                        url: 'https://www.zillow.com/homes/Los-Angeles,-CA_rb/',
+                        url: startUrl || 'https://www.zillow.com/homes/Los-Angeles,-CA_rb/',
                         userData: {
                             queryState: state,
                             splitCount: (request.userData.splitCount || 0) + 1
