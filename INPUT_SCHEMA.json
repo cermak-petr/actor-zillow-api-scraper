@@ -18,12 +18,14 @@
             "enum": [
                 "sale",
                 "fsbo",
-                "rent"
+                "rent",
+                "all"
             ],
             "enumTitles": [
                 "For sale",
                 "For sale by owner",
-                "For rent"
+                "For rent",
+                "All"
             ]
         },
         "startUrls": {
