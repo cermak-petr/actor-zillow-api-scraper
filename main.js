@@ -172,8 +172,8 @@ Apify.main(async () => {
     Apify.events.on('migrating', data => Apify.setValue('STATE', state));
 
     // Check input
-    if(!(input.search && input.search.trim().length > 0) && !input.startUrls){
-        throw new Error('Either "search" or "startUrls" attribute has to be set!');
+    if(!(input.search && input.search.trim().length > 0) && !input.startUrls && !input.zpids){
+        throw new Error('Either "search", "startUrls" or "zpids" attribute has to be set!');
     }
     
     // Initialize minimum time
