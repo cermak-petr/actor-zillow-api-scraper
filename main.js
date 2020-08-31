@@ -257,17 +257,6 @@ Apify.main(async () => {
                 throw 'Unable to get searchState, retrying...';
             }
             
-            // Extract all homes by input ZPIDs
-            if(input.zpids && input.zpids.length > 0){
-                const start = request.userData.start || 0;
-                if(start){console.log('Starting at ' + start);}
-                for(let i = start; i < input.zpids.length; i++){
-                    const zpid = input.zpids[i];
-                    await processZpid(zpid, i);
-                }
-                return process.exit(0);
-            }
-            
             // Extract home data by ZPID
             const processZpid = async (zpid, index) => {
                 try{
@@ -295,6 +284,17 @@ Apify.main(async () => {
                     return;
                 }
             };
+            
+            // Extract all homes by input ZPIDs
+            if(input.zpids && input.zpids.length > 0){
+                const start = request.userData.start || 0;
+                if(start){console.log('Starting at ' + start);}
+                for(let i = start; i < input.zpids.length; i++){
+                    const zpid = input.zpids[i];
+                    await processZpid(zpid, i);
+                }
+                return process.exit(0);
+            }
             
             // Check mapResults
             const mapResults = searchState.searchResults.mapResults;
