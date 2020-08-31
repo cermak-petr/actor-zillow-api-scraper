@@ -225,6 +225,9 @@ Apify.main(async () => {
             await requestQueue.addRequest(request);
         }
     }
+    if(input.zpids){
+        await requestQueue.addRequest({url: 'https://www.zillow.com/homes/Los-Angeles,-CA_rb/'});
+    }
 
     // Create crawler
     const crawler = new Apify.PuppeteerCrawler({
@@ -254,6 +257,44 @@ Apify.main(async () => {
                 throw 'Unable to get searchState, retrying...';
             }
             
+            // Extract all homes by input ZPIDs
+            if(input.zpids && input.zpids.length > 0){
+                const start = request.userData.start || 0;
+                if(start){console.log('Starting at ' + start);}
+                for(let i = start; i < zpids.length; i++){
+                    const zpid = input.zpids[i];
+                    await processZpid(zpid, i);
+                }
+            }
+            
+            // Extract home data by ZPID
+            const processZpid = async (zpid, index) => {
+                try{
+                    const homeData = await page.evaluate(queryZpid, zpid, queryId);
+                    if(minTime && homeData.data.property.datePosted <= minTime){return;}
+                    const result = getSimpleResult(homeData.data.property);
+                    if(extendOutputFunction){
+                        try{Object.assign(result, await extendOutputFunction(homeData.data));}
+                        catch(e){console.log('extendOutputFunction error:'); console.log(e);}
+                    }
+                    await Apify.pushData(result);
+                    state.extractedZpids[zpid] = true;
+                    if(input.maxItems && ++state.resultCount >= input.maxItems){
+                        return process.exit(0);
+                    }
+                }
+                catch(e){
+                    console.log('Data extraction failed - zpid: ' + zpid);
+                    await puppeteerPool.retire(page.browser());
+                    await requestQueue.addRequest({
+                        url: request.url,
+                        uniqueKey: Math.random() + '',
+                        userData: Object.assign(request.userData, {start: index})
+                    });
+                    return;
+                }
+            };
+            
             // Check mapResults
             const mapResults = searchState.searchResults.mapResults;
             console.log('Searching homes at ' + JSON.stringify(qs.mapBounds));
@@ -268,30 +309,7 @@ Apify.main(async () => {
                 for(let i = start; i < mapResults.length; i++){
                     const home = mapResults[i];
                     if(home.zpid && !state.extractedZpids[home.zpid]){
-                        try{
-                            const homeData = await page.evaluate(queryZpid, home.zpid, queryId);
-                            if(minTime && homeData.data.property.datePosted <= minTime){return;}
-                            const result = getSimpleResult(homeData.data.property);
-                            if(extendOutputFunction){
-                                try{Object.assign(result, await extendOutputFunction(homeData.data));}
-                                catch(e){console.log('extendOutputFunction error:'); console.log(e);}
-                            }
-                            await Apify.pushData(result);
-                            state.extractedZpids[home.zpid] = true;
-                            if(input.maxItems && ++state.resultCount >= input.maxItems){
-                                return process.exit(0);
-                            }
-                        }
-                        catch(e){
-                            console.log('Data extraction failed - zpid: ' + home.zpid);
-                            await puppeteerPool.retire(page.browser());
-                            await requestQueue.addRequest({
-                                url: request.url,
-                                uniqueKey: Math.random() + '',
-                                userData: Object.assign(request.userData, {start: i})
-                            });
-                            return;
-                        }
+                        await processZpid(home.zpid, i);
                     }
                 }
             }
