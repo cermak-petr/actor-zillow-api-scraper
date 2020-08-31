@@ -32,7 +32,13 @@
             "title": "Start URLs",
             "type": "array",
             "editor": "requestListSources",
-            "description": "List of URLs that will be scraped or crawled. Can be main website URL, category/search URLs or detail/product URLs."
+            "description": "List of URLs that will be crawled."
+        },
+        "zpids": {
+            "title": "Zillow home IDs",
+            "type": "array",
+            "editor": "json",
+            "description": "List of ZPIDs that will be scraped."
         },
         "maxLevel": {
             "title": "Max zoom level",
