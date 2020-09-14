@@ -4,7 +4,7 @@ const Apify = require('apify');
 const getWorkingBrowser = async (url, lpOptions) => {
     for(let i = 0; i < 100; i++){
         const browser = await Apify.launchPuppeteer(Object.assign({
-            apifyProxySession: 'ZILLOW_' + i
+            apifyProxySession: 'ZILLOW_' + Math.random()
         }, lpOptions));
         const page = await browser.newPage();
         try{
