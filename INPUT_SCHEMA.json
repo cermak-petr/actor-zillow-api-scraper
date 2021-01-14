@@ -14,7 +14,7 @@
             "title": "Type",
             "type": "string",
             "description": "Property for sale/rent",
-            "default": "sale",
+            "default": "all",
             "enum": [
                 "sale",
                 "fsbo",
