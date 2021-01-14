@@ -16,10 +16,10 @@
             "description": "Property for sale/rent",
             "default": "all",
             "enum": [
+                "all",
                 "sale",
                 "fsbo",
-                "rent",
-                "all"
+                "rent"                
             ],
             "enumTitles": [
                 "For sale",
