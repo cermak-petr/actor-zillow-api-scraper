@@ -2,10 +2,19 @@
     "name": "actor-zillow-api",
     "version": "0.0.1",
     "dependencies": {
-        "apify": "^0.19.1"
+        "apify": "^0.22.4",
+        "puppeteer": "^5.5.0"
+    },
+    "devDependencies": {
+        "@apify/eslint-config": "^0.1.3",
+        "eslint": "^7.18.0"
     },
     "scripts": {
-        "start": "node main.js"
+        "start": "node src/main.js"
     },
-    "author": "Petr Čermák"
+    "author": {
+        "name": "Petr Čermák",
+        "url": "https://github.com/cermak-petr"
+    },
+    "license": "Apache-2.0"
 }

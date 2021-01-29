@@ -1,0 +1,9 @@
+{
+	"name": "actor-google-trending-searches",
+	"version": "0.0",
+	"buildTag": "latest",
+	"env": {
+		"npm_config_loglevel": "silent"
+	},
+	"template": "project_empty"
+}

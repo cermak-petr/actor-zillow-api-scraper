@@ -15,18 +15,8 @@
             "type": "string",
             "description": "Property for sale/rent",
             "default": "all",
-            "enum": [
-                "all",
-                "sale",
-                "fsbo",
-                "rent"
-            ],
-            "enumTitles": [
-                "All",
-                "For sale",
-                "For sale by owner",
-                "For rent"
-            ]
+            "enum": ["all", "sale", "fsbo", "rent"],
+            "enumTitles": ["All", "For sale", "For sale by owner", "For rent"]
         },
         "startUrls": {
             "title": "Start URLs",

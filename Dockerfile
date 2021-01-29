@@ -33,6 +33,8 @@ RUN npm --quiet set progress=false \
 # for most source file changes.
 COPY . ./
 
+ENV npm_config_loglevel=silent
+
 # Optionally, specify how to launch the source code of your actor.
 # By default, Apify's base Docker images define the CMD instruction
 # that runs the Node.js source code using the command specified
