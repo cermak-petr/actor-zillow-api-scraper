@@ -11,3 +11,4 @@
 - Additional parameters that can be provided
 - Fixed infinite loop while scanning for houses
 - Improved initial search
+- Added ability for `sold` listings

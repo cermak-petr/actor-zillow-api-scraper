@@ -472,9 +472,10 @@ Apify.main(async () => {
                             log.info(`Starting at ${start}`);
                         }
 
-                        const interval = setInterval(() => {
+                        const extracted = () => {
                             log.info(`Extracted ${ds.data.size} items`);
-                        }, 10000);
+                        };
+                        const interval = setInterval(extracted, 10000);
 
                         try {
                             for (let i = start; i < mapResults.length; i++) {
@@ -487,6 +488,8 @@ Apify.main(async () => {
                                     }
                                 }
                             }
+
+                            extracted();
                         } finally {
                             clearInterval(interval);
                         }

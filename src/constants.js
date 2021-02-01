@@ -17,6 +17,7 @@ const TYPES = {
     all: 'all',
     fsbo: 'fsbo',
     sale: 'sale',
+    sold: 'sold',
 };
 
 module.exports = {

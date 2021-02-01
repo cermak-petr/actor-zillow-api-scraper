@@ -162,6 +162,20 @@ const queryRegionHomes = async ({ qs, type }) => {
             isPreMarketPreForeclosure: { value: false },
             isForRent: { value: false },
         };
+    } else if (type === 'sold') {
+        qs.filterState = {
+            sortSelection: { value: 'globalrelevanceex' },
+            isAllHomes: { value: true },
+            isRecentlySold: { value: true },
+            isForSaleByAgent: { value: false },
+            isForSaleByOwner: { value: false },
+            isNewConstruction: { value: false },
+            isComingSoon: { value: false },
+            isAuction: { value: false },
+            isForSaleForeclosure: { value: false },
+            isPreMarketForeclosure: { value: false },
+            isPreMarketPreForeclosure: { value: false },
+        };
     } else if (type === 'all') {
         qs.filterState = {
             isPreMarketForeclosure: { value: true },
