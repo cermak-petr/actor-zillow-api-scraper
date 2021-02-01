@@ -1,5 +1,5 @@
 {
-	"name": "actor-google-trending-searches",
+	"name": "actor-zillow-api-scraper",
 	"version": "0.0",
 	"buildTag": "latest",
 	"env": {

@@ -5,6 +5,7 @@ const LABELS = {
     QUERY: 'QUERY',
     INITIAL: 'INITIAL',
     DETAIL: 'DETAIL',
+    SEARCH: 'SEARCH',
     ZPIDS: 'ZPIDS',
 };
 

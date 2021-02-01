@@ -56,20 +56,46 @@
             "description": "Return only a subset of possible result attributes.",
             "default": true
         },
-        "extendOutputFunction": {
-            "title": "Extend output function",
-            "type": "string",
-            "editor": "javascript",
-            "description": "A function which result will get merged with the default result",
-            "prefill": "(data) => {\n    return {};\n}",
-            "sectionCaption": "Advanced options"
-        },
         "proxyConfiguration": {
             "title": "Proxy configuration",
             "type": "object",
             "editor": "proxy",
             "description": "The best option is usually Automatic proxy. But you can also use your own proxies or no proxy",
+            "default": { "useApifyProxy": true },
             "prefill": { "useApifyProxy": true }
+        },
+        "maxRetries": {
+            "title": "Max retries",
+            "description": "How many retries until the scraper should give up",
+            "type": "integer",
+            "editor": "number",
+            "prefill": 20,
+            "default": 20
+        },
+        "extendOutputFunction": {
+            "title": "Extend output function",
+            "type": "string",
+            "editor": "javascript",
+            "description": "A function which result will get merged with the default result",
+            "prefill": "({ data, item, customData, Apify, ds }) => {\n    return item;\n}",
+            "sectionCaption": "Extend scraper functionality",
+            "sectionDescription": "You can change the output of the items for your dataset here, or add additional behavior on the scraper."
+        },
+        "extendScraperFunction": {
+            "title": "Extend Scraper Function",
+            "description": "Advanced function that allows you to extend the default scraper functionality, allowing you to manually perform actions on the page",
+            "type": "string",
+            "default": "",
+            "prefill": "async ({ request, customData, page, ds, requestQueue, processZpid, queryZpid, Apify }) => {\n \n}",
+            "editor": "javascript"
+        },
+        "customData": {
+            "title": "Custom data",
+            "description": "Any data that you want to have available inside the Extend Output/Scraper Function",
+            "default": {},
+            "prefill": {},
+            "type": "object",
+            "editor": "json"
         }
     }
 }

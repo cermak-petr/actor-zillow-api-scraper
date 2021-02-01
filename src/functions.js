@@ -1,15 +1,16 @@
 const Apify = require('apify');
 const Puppeteer = require('puppeteer'); // eslint-disable-line no-unused-vars
 const { createHash } = require('crypto');
-const { TYPES } = require('./constants');
+const vm = require('vm');
+const { TYPES, LABELS } = require('./constants');
 
 const { sleep } = Apify.utils;
 
 const deferred = () => {
     /** @type {(...args: any) => void} */
-    let resolve = () => {};
+    let resolve = () => { };
     /** @type {(err: Error) => void} */
-    let reject = () => {};
+    let reject = () => { };
 
     const promise = new Promise((r1, r2) => {
         resolve = /** @type {any} */(r1);
@@ -103,7 +104,7 @@ const interceptQueryId = async (page) => {
     await page.click('a.list-card-link');
 
     return Promise.race([
-        sleep(30000).then(() => reject(new Error('Failed to find queryId'))),
+        sleep(120000).then(() => reject(new Error('Failed to find queryId'))),
         promise,
     ]);
 };
@@ -179,10 +180,23 @@ const queryRegionHomes = async ({ qs, type }) => {
     const requestId = Math.round(Math.random() * 30) + 1;
     const resp = await fetch(`https://www.zillow.com/search/GetSearchPageState.htm?searchQueryState=${encodeURIComponent(JSON.stringify(qs))}&requestId=${requestId}`, {
         body: null,
+        headers: {
+            'Cache-Control': 'no-cache',
+            DNT: '1',
+            Accept: '*/*',
+            Origin: document.location.origin,
+            Pragma: 'no-cache',
+            Referer: document.location.href,
+        },
         method: 'GET',
         mode: 'cors',
         credentials: 'omit',
     });
+
+    if (resp.status !== 200) {
+        throw `Got ${resp.status} from query`;
+    }
+
     return (await resp.blob()).text();
 };
 
@@ -216,11 +230,21 @@ const createQueryZpid = (queryId, clientVersion, cookies) => (page, zpid) => {
             method: 'POST',
             body,
             headers: {
+                'Cache-Control': 'no-cache',
+                DNT: '1',
+                Accept: '*/*',
                 'Content-Type': 'text/plain',
+                Origin: document.location.origin,
+                Pragma: 'no-cache',
+                Referer: document.location.href,
             },
             mode: 'cors',
-            credentials: 'include',
+            credentials: 'omit',
         });
+
+        if (resp.status !== 200) {
+            throw `Got status ${resp.status} from GraphQL`;
+        }
 
         return (await resp.blob()).text();
     }, { zpid, queryId, clientVersion });
@@ -257,12 +281,222 @@ const createGetSimpleResult = (attributes) => (data) => {
  */
 const quickHash = (data) => createHash('sha256').update(JSON.stringify(data)).digest('hex').slice(0, 12);
 
+/**
+ * @param {string} url
+ */
+const getUrlData = (url) => {
+    const nUrl = new URL(url, 'https://www.zillow.com');
+
+    if (/\d+_zpid/.test(nUrl.pathname)) {
+        return {
+            label: LABELS.DETAIL,
+        };
+    }
+
+    if (nUrl.searchParams.has('searchQueryState')) {
+        return {
+            label: LABELS.QUERY,
+            queryState: JSON.parse(nUrl.searchParams.get('searchQueryState')),
+        };
+    }
+
+    if (nUrl.pathname.startsWith('/homes')) {
+        return {
+            label: LABELS.QUERY,
+        };
+    }
+
+    return {
+        label: LABELS.QUERY,
+        term: nUrl.pathname.split('/', 2).filter((s) => s)[0],
+    };
+};
+
+/**
+ * @template T
+ * @typedef {T & { Apify: Apify, customData: any, request: Apify.Request }} PARAMS
+ */
+
+/**
+ * Compile a IO function for mapping, filtering and outputing items.
+ * Can be used as a no-op for interaction-only (void) functions on `output`.
+ * Data can be mapped and filtered twice.
+ *
+ * Provided base map and filter functions is for preparing the object for the
+ * actual extend function, it will receive both objects, `data` as the "raw" one
+ * and "item" as the processed one.
+ *
+ * Always return a passthrough function if no outputFunction provided on the
+ * selected key.
+ *
+ * @template RAW
+ * @template {{ [key: string]: any }} INPUT
+ * @template MAPPED
+ * @template {{ [key: string]: any }} HELPERS
+ * @param {{
+    *  key: string,
+    *  map?: (data: RAW, params: PARAMS<HELPERS>) => Promise<MAPPED>,
+    *  output?: (data: MAPPED, params: PARAMS<HELPERS> & { data: RAW, item: MAPPED }) => Promise<void>,
+    *  filter?: (obj: { data: RAW, item: MAPPED }, params: PARAMS<HELPERS>) => Promise<boolean>,
+    *  input: INPUT,
+    *  helpers: HELPERS,
+    * }} params
+    * @return {Promise<(data: RAW, args?: Record<string, any>) => Promise<void>>}
+    */
+const extendFunction = async ({
+    key,
+    output,
+    filter,
+    map,
+    input,
+    helpers,
+}) => {
+    /**
+     * @type {PARAMS<HELPERS>}
+     */
+    const base = {
+        ...helpers,
+        Apify,
+        customData: input.customData || {},
+    };
+
+    const evaledFn = (() => {
+        // need to keep the same signature for no-op
+        if (typeof input[key] !== 'string' || input[key].trim() === '') {
+            return new vm.Script('({ item }) => item');
+        }
+
+        try {
+            return new vm.Script(input[key], {
+                lineOffset: 0,
+                produceCachedData: false,
+                displayErrors: true,
+                filename: `${key}.js`,
+            });
+        } catch (e) {
+            throw new Error(`"${key}" parameter must be a function`);
+        }
+    })();
+
+    /**
+     * Returning arrays from wrapper function split them accordingly.
+     * Normalize to an array output, even for 1 item.
+     *
+     * @param {any} value
+     * @param {any} [args]
+     */
+    const splitMap = async (value, args) => {
+        const mapped = map ? await map(value, args) : value;
+
+        if (!Array.isArray(mapped)) {
+            return [mapped];
+        }
+
+        return mapped;
+    };
+
+    return async (data, args) => {
+        const merged = { ...base, ...args };
+
+        for (const item of await splitMap(data, merged)) {
+            if (filter && !(await filter({ data, item }, merged))) {
+                continue; // eslint-disable-line no-continue
+            }
+
+            const result = await (evaledFn.runInThisContext()({
+                ...merged,
+                data,
+                item,
+            }));
+
+            for (const out of (Array.isArray(result) ? result : [result])) {
+                if (output) {
+                    if (out !== null) {
+                        await output(out, { ...merged, data, item });
+                    }
+                    // skip output
+                }
+            }
+        }
+    };
+};
+
+/**
+ * @param {Apify.Dataset} dataset
+ * @param {number} [limit]
+ */
+const intervalPushData = async (dataset, limit = 500) => {
+    const data = new Map(await Apify.getValue('PENDING_PUSH'));
+    await Apify.setValue('PENDING_PUSH', []);
+    let shouldPush = true;
+
+    /** @type {any} */
+    let timeout;
+
+    const timeoutFn = async () => {
+        if (shouldPush && data.size >= limit) {
+            const dataToPush = [...data.values()];
+            data.clear();
+            await dataset.pushData(dataToPush);
+        }
+
+        timeout = setTimeout(timeoutFn, 10000);
+    };
+
+    Apify.events.on('migrating', async () => {
+        shouldPush = false;
+        if (timeout) {
+            clearTimeout(timeout);
+        }
+        await Apify.setValue('PENDING_PUSH', [...data.entries()]);
+    });
+
+    await timeoutFn();
+
+    return {
+        /**
+             * Synchronous pushData
+             *
+             * @param {string} key
+             * @param {any} item
+             * @returns {boolean} Returns true if the item is new
+             */
+        pushData(key, item) {
+            const isNew = !data.has(key);
+            data.set(key, item);
+            return isNew;
+        },
+        data,
+        /**
+             * Flushes any remaining items on the pending array.
+             * Call this after await crawler.run()
+             */
+        async flush() {
+            shouldPush = false;
+
+            if (timeout) {
+                clearTimeout(timeout);
+            }
+
+            const dataToPush = [...data.values()];
+
+            while (dataToPush.length) {
+                await Apify.pushData(dataToPush.splice(0, limit));
+                await Apify.utils.sleep(1000);
+            }
+        },
+    };
+};
+
 module.exports = {
     createGetSimpleResult,
     createQueryZpid,
     interceptQueryId,
     queryRegionHomes,
     splitQueryState,
+    intervalPushData,
+    extendFunction,
     proxyConfiguration,
     quickHash,
+    getUrlData,
 };
