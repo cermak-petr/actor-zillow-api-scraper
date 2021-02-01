@@ -10,7 +10,6 @@ const {
     quickHash,
     getUrlData,
     extendFunction,
-    intervalPushData,
 } = require('./functions');
 
 const { log, puppeteer, sleep } = Apify.utils;
@@ -135,7 +134,12 @@ Apify.main(async () => {
             },
     );
 
-    const ds = await intervalPushData(await Apify.openDataset(), input.maxItems ? input.maxItems * 3 : 25000);
+    const zpids = new Set(await Apify.getValue('STATE'));
+
+    Apify.events.on('migrating', async () => {
+        await Apify.setValue('STATE', [...zpids.values()]);
+    });
+
     const requestQueue = await Apify.openRequestQueue();
 
     /**
@@ -195,7 +199,7 @@ Apify.main(async () => {
         },
     });
 
-    const isOverItems = (extra = 0) => (input.maxItems && (ds.data.size + extra) >= input.maxItems);
+    const isOverItems = (extra = 0) => (input.maxItems && (zpids.size + extra) >= input.maxItems);
 
     const extendOutputFunction = await extendFunction({
         map: async (data) => {
@@ -206,17 +210,19 @@ Apify.main(async () => {
                 return false;
             }
 
-            return minTime ? data.datePosted <= minTime : true;
+            return (minTime ? data.datePosted <= minTime : true)
+                && !zpids.has(data.zpid);
         },
         output: async (output, { data }) => {
-            ds.pushData(data.zpid, output);
+            zpids.add(data.zpid);
+            await Apify.pushData(output);
         },
         input,
         key: 'extendOutputFunction',
         helpers: {
             getUrlData,
             getSimpleResult,
-            ds,
+            zpids,
             minTime,
             TYPES,
             LABELS,
@@ -238,7 +244,7 @@ Apify.main(async () => {
                 return queryZpid;
             },
             getSimpleResult,
-            ds,
+            zpids,
             extendOutputFunction,
             minTime,
         },
@@ -354,31 +360,36 @@ Apify.main(async () => {
                     autoscaledPool.maxConcurrency = 100;
                 }
             } else if (label === LABELS.DETAIL) {
-                const scripts = await page.$x('//script[contains(., "ForSaleDoubleScrollFullRenderQuery")]');
+                const scripts = await page.$x('//script[contains(., "RenderQuery")]');
 
                 if (!scripts.length) {
+                    await retire();
                     throw 'Failed to load preloaded data';
                 }
 
                 log.info(`Extracting data from ${request.url}`);
 
-                for (const script of scripts) {
-                    const loaded = JSON.parse(JSON.parse(await script.evaluate((s) => s.innerHTML)).apiCache);
+                try {
+                    for (const script of scripts) {
+                        const loaded = JSON.parse(JSON.parse(await script.evaluate((s) => s.innerHTML)).apiCache);
 
-                    for (const key in loaded) { // eslint-disable-line
-                        if (key.includes('ForSaleDoubleScrollFullRenderQuery')) {
-                            await extendOutputFunction(loaded[key].property, {
-                                request,
-                                page,
-                                zpid: request.userData.zpid,
-                            });
+                        for (const key in loaded) { // eslint-disable-line
+                            if (key.includes('RenderQuery') && loaded[key].property) {
+                                await extendOutputFunction(loaded[key].property, {
+                                    request,
+                                    page,
+                                    zpid: request.userData.zpid,
+                                });
 
-                            return; // success
+                                return; // success
+                            }
                         }
                     }
+                } catch (e) {
+                    log.debug(e);
+                    await retire();
+                    throw 'Failed to load preloaded data';
                 }
-
-                throw 'Failed to load preloaded data';
             } else if (label === LABELS.ZPIDS) {
                 // Extract all homes by input ZPIDs
                 const start = request.userData.start || 0;
@@ -473,14 +484,14 @@ Apify.main(async () => {
                         }
 
                         const extracted = () => {
-                            log.info(`Extracted ${ds.data.size} items`);
+                            log.info(`Extracted ${zpids.size} items`);
                         };
                         const interval = setInterval(extracted, 10000);
 
                         try {
                             for (let i = start; i < mapResults.length; i++) {
                                 const home = mapResults[i];
-                                if (home.zpid && !ds.data.has(home.zpid)) {
+                                if (home.zpid && !zpids.has(home.zpid)) {
                                     await processZpid(home.zpid);
 
                                     if (isOverItems()) {
@@ -488,9 +499,8 @@ Apify.main(async () => {
                                     }
                                 }
                             }
-
-                            extracted();
                         } finally {
+                            extracted();
                             clearInterval(interval);
                         }
                     }
@@ -534,7 +544,6 @@ Apify.main(async () => {
 
     // Start crawling
     await crawler.run();
-    await ds.flush();
 
     log.info('Done!');
 });
