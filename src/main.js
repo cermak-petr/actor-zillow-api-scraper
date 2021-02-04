@@ -254,7 +254,7 @@ Apify.main(async () => {
     const crawler = new Apify.PuppeteerCrawler({
         requestQueue,
         maxRequestRetries: input.maxRetries || 20,
-        handlePageTimeoutSecs: 3600,
+        handlePageTimeoutSecs: input.handlePageTimeoutSecs || 3600,
         useSessionPool: true,
         proxyConfiguration: proxyConfig,
         launchPuppeteerOptions: {
@@ -291,7 +291,7 @@ Apify.main(async () => {
                 timeout: 30000,
             });
         },
-        maxConcurrency: 1,
+        maxConcurrency: isDebug ? 1 : 20,
         handlePageFunction: async ({ page, request, puppeteerPool, autoscaledPool, session }) => {
             const retire = async () => {
                 session.retire();
@@ -311,7 +311,7 @@ Apify.main(async () => {
             const processZpid = async (zpid) => {
                 if (!session.isUsable()) {
                     await retire();
-                    throw `Retiring session`;
+                    throw 'Retiring session';
                 }
 
                 try {
@@ -421,8 +421,8 @@ Apify.main(async () => {
                         page.click(btn),
                     ]);
 
-                    if (!/(\/homes\/|_rb)/.test(page.url())) {
-                        throw 'Page didn\'t load properly';
+                    if (!/(\/homes\/|_rb)/.test(page.url()) || page.url().includes('/homes/_rb/')) {
+                        throw 'Page didn\'t load properly, retrying...';
                     }
 
                     await page.waitForSelector('script[data-zrr-shared-data-key="mobileSearchPageStore"]');
@@ -483,14 +483,16 @@ Apify.main(async () => {
                             log.info(`Starting at ${start}`);
                         }
 
+                        let counting = start;
+
                         const extracted = () => {
-                            log.info(`Extracted ${zpids.size} items`);
+                            log.info(`Extracted total ${zpids.size}, current ${counting} items`);
                         };
                         const interval = setInterval(extracted, 10000);
 
                         try {
-                            for (let i = start; i < mapResults.length; i++) {
-                                const home = mapResults[i];
+                            for (; counting < mapResults.length; counting++) {
+                                const home = mapResults[counting];
                                 if (home.zpid && !zpids.has(home.zpid)) {
                                     await processZpid(home.zpid);
 

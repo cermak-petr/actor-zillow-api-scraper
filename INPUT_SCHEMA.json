@@ -96,6 +96,14 @@
             "prefill": {},
             "type": "object",
             "editor": "json"
+        },
+        "handlePageTimeoutSecs": {
+            "title": "Timeout seconds",
+            "description": "Configure the handlePageTimeoutSecs setting",
+            "default": 3600,
+            "prefill": 3600,
+            "type": "integer",
+            "editor": "number"
         }
     }
 }
