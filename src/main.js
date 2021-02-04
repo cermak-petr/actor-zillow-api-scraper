@@ -1,4 +1,5 @@
 const Apify = require('apify');
+const _ = require('lodash');
 const { LABELS, TYPES } = require('./constants');
 const {
     createGetSimpleResult,
@@ -222,6 +223,7 @@ Apify.main(async () => {
         helpers: {
             getUrlData,
             getSimpleResult,
+            _,
             zpids,
             minTime,
             TYPES,
@@ -245,6 +247,7 @@ Apify.main(async () => {
             },
             getSimpleResult,
             zpids,
+            _,
             extendOutputFunction,
             minTime,
         },
@@ -260,7 +263,7 @@ Apify.main(async () => {
         launchPuppeteerOptions: {
             devtools: isDebug,
             useChrome: Apify.isAtHome(),
-            stealth: true,
+            stealth: !Apify.isAtHome(),
         },
         gotoFunction: async ({ page, request }) => {
             await puppeteer.blockRequests(page, {
@@ -291,7 +294,7 @@ Apify.main(async () => {
                 timeout: 30000,
             });
         },
-        maxConcurrency: isDebug ? 1 : 20,
+        maxConcurrency: isDebug ? 1 : 10,
         handlePageFunction: async ({ page, request, puppeteerPool, autoscaledPool, session }) => {
             const retire = async () => {
                 session.retire();
@@ -424,8 +427,12 @@ Apify.main(async () => {
                     if (!/(\/homes\/|_rb)/.test(page.url()) || page.url().includes('/homes/_rb/')) {
                         throw 'Page didn\'t load properly, retrying...';
                     }
+                }
 
+                try {
                     await page.waitForSelector('script[data-zrr-shared-data-key="mobileSearchPageStore"]');
+                } catch (e) {
+                    log.debug(e);
                 }
 
                 // Get initial searchState
@@ -433,15 +440,25 @@ Apify.main(async () => {
                 let searchState;
 
                 try {
-                    if (!qs) {
-                        qs = await page.evaluate(() => {
+                    const pageQs = await page.evaluate(() => {
+                        try {
                             return JSON.parse(
                                 document.querySelector(
                                     'script[data-zrr-shared-data-key="mobileSearchPageStore"]',
                                 ).innerHTML.slice(4, -3),
-                            ).queryState;
-                        });
+                            );
+                        } catch (e) {
+                            return {};
+                        }
+                    });
+
+                    for (const { zpid } of _.get(pageQs, 'cat1.searchResults.listResults', [])) {
+                        if (zpid) {
+                            await processZpid(zpid);
+                        }
                     }
+
+                    qs = qs || pageQs.queryState;
 
                     searchState = JSON.parse(await page.evaluate(
                         queryRegionHomes,
