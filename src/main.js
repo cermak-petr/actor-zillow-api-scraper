@@ -411,8 +411,9 @@ Apify.main(async () => {
                 } catch (e) {
                     log.debug(e);
                     await retire();
-                    throw 'Failed to load preloaded data';
                 }
+
+                throw 'Failed to load preloaded data';
             } else if (label === LABELS.ZPIDS) {
                 // Extract all homes by input ZPIDs
                 const start = request.userData.start || 0;
@@ -442,7 +443,7 @@ Apify.main(async () => {
                     await sleep(3000);
 
                     await Promise.all([
-                        page.waitForNavigation({ waitUntil: 'networkidle2' }),
+                        page.waitForNavigation({ timeout: 30000 }),
                         page.click(btn),
                     ]);
 
