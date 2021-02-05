@@ -104,6 +104,13 @@
             "prefill": 3600,
             "type": "integer",
             "editor": "number"
+        },
+        "stealth": {
+            "title": "Stealth",
+            "description": "Apply stealth to the browser",
+            "default": false,
+            "type": "boolean",
+            "editor": "checkbox"
         }
     }
 }

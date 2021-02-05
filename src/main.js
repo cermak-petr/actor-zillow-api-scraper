@@ -262,8 +262,7 @@ Apify.main(async () => {
         proxyConfiguration: proxyConfig,
         launchPuppeteerOptions: {
             devtools: isDebug,
-            useChrome: Apify.isAtHome(),
-            stealth: !Apify.isAtHome(),
+            stealth: input.stealth || false,
         },
         gotoFunction: async ({ page, request }) => {
             await puppeteer.blockRequests(page, {
@@ -424,7 +423,7 @@ Apify.main(async () => {
                         page.click(btn),
                     ]);
 
-                    if (!/(\/homes\/|_rb)/.test(page.url()) || page.url().includes('/homes/_rb/')) {
+                    if (!/(\/homes\/|_rb)/.test(page.url()) || page.url().includes('/homes/_rb/') || await page.$('.captcha-container')) {
                         throw 'Page didn\'t load properly, retrying...';
                     }
                 }
