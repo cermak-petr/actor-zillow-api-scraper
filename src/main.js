@@ -1,6 +1,6 @@
 const Apify = require('apify');
 const _ = require('lodash');
-const { LABELS, TYPES } = require('./constants');
+const { LABELS, TYPES, USER_AGENT } = require('./constants');
 const {
     createGetSimpleResult,
     createQueryZpid,
@@ -260,11 +260,22 @@ Apify.main(async () => {
         handlePageTimeoutSecs: input.handlePageTimeoutSecs || 3600,
         useSessionPool: true,
         proxyConfiguration: proxyConfig,
-        launchPuppeteerOptions: {
-            devtools: isDebug,
-            stealth: input.stealth || false,
+        launchPuppeteerFunction: async (options) => {
+            return Apify.launchPuppeteer({
+                ...options,
+                userAgent: USER_AGENT,
+                args: [
+                    ...options.args,
+                    '--enable-features=NetworkService',
+                    '--ignore-certificate-errors',
+                    '--disable-blink-features=AutomationControlled', // removes webdriver from window.navigator
+                ],
+                devtools: isDebug,
+                ignoreHTTPSErrors: true,
+                stealth: input.stealth || false,
+            });
         },
-        gotoFunction: async ({ page, request }) => {
+        gotoFunction: async ({ page, request, puppeteerPool, session }) => {
             await puppeteer.blockRequests(page, {
                 extraUrlPatterns: [
                     // 'maps.googleapis.com', // needed
@@ -284,14 +295,24 @@ Apify.main(async () => {
                 ],
             });
 
-            await page.setUserAgent(
-                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/88.0.4324.104 Safari/537.36',
-            );
-
-            return page.goto(request.url, {
-                waitUntil: 'domcontentloaded',
-                timeout: 30000,
+            await page.emulate({
+                userAgent: USER_AGENT,
+                viewport: {
+                    height: 1080,
+                    width: 1920,
+                },
             });
+
+            try {
+                return await page.goto(request.url, {
+                    waitUntil: 'domcontentloaded',
+                    timeout: 30000,
+                });
+            } catch (e) {
+                session.retire();
+                await puppeteerPool.retire(page.browser());
+                throw e;
+            }
         },
         maxConcurrency: isDebug ? 1 : 10,
         handlePageFunction: async ({ page, request, puppeteerPool, autoscaledPool, session }) => {
@@ -405,6 +426,8 @@ Apify.main(async () => {
                 }
             } else if (label === LABELS.QUERY || label === LABELS.SEARCH) {
                 if (label === LABELS.SEARCH) {
+                    log.info(`Searching for "${request.userData.term}"`);
+
                     const text = '#search-box-input';
                     const btn = '[aria-label="Submit Search"]';
 
@@ -419,7 +442,7 @@ Apify.main(async () => {
                     await sleep(3000);
 
                     await Promise.all([
-                        page.waitForNavigation(),
+                        page.waitForNavigation({ waitUntil: 'networkidle2' }),
                         page.click(btn),
                     ]);
 
