@@ -305,8 +305,8 @@ Apify.main(async () => {
 
             try {
                 return await page.goto(request.url, {
-                    waitUntil: 'domcontentloaded',
-                    timeout: 30000,
+                    waitUntil: 'load',
+                    timeout: 60000,
                 });
             } catch (e) {
                 session.retire();
@@ -314,7 +314,7 @@ Apify.main(async () => {
                 throw e;
             }
         },
-        maxConcurrency: isDebug ? 1 : 10,
+        maxConcurrency: 1,
         handlePageFunction: async ({ page, request, puppeteerPool, autoscaledPool, session }) => {
             const retire = async () => {
                 session.retire();
@@ -475,7 +475,13 @@ Apify.main(async () => {
                         }
                     });
 
-                    for (const { zpid } of _.get(pageQs, 'cat1.searchResults.listResults', [])) {
+                    const results = _.get(pageQs, 'cat1.searchResults.listResults', []);
+
+                    if (results.length) {
+                        log.info(`Got first ${results.length} results...`);
+                    }
+
+                    for (const { zpid } of results) {
                         if (zpid) {
                             await processZpid(zpid);
                         }
