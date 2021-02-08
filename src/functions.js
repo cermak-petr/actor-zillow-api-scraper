@@ -191,8 +191,7 @@ const queryRegionHomes = async ({ qs, type }) => {
         };
     }
 
-    const requestId = Math.round(Math.random() * 30) + 1;
-    const resp = await fetch(`https://www.zillow.com/search/GetSearchPageState.htm?searchQueryState=${encodeURIComponent(JSON.stringify(qs))}&requestId=${requestId}`, {
+    const resp = await fetch(`https://www.zillow.com/search/GetSearchPageState.htm?searchQueryState=${encodeURIComponent(JSON.stringify(qs))}`, {
         body: null,
         headers: {
             'Cache-Control': 'no-cache',

@@ -34,7 +34,7 @@
             "title": "Max zoom level",
             "type": "integer",
             "minimum": 0,
-            "prefill": 20,
+            "prefill": 5,
             "description": "Maximum map splitting level"
         },
         "maxItems": {

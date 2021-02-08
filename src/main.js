@@ -22,7 +22,6 @@ Apify.main(async () => {
     const input = await Apify.getInput();
 
     const isDebug = Apify.utils.log.getLevel() === Apify.utils.log.LEVELS.DEBUG;
-    let localCount = 0;
 
     // Check input
     if (!(input.search && input.search.trim().length > 0) && !input.startUrls && !input.zpids) {
@@ -212,10 +211,10 @@ Apify.main(async () => {
             }
 
             return (minTime ? data.datePosted <= minTime : true)
-                && !zpids.has(data.zpid);
+                && !zpids.has(`${data.zpid}`);
         },
         output: async (output, { data }) => {
-            zpids.add(data.zpid);
+            zpids.add(`${data.zpid}`);
             await Apify.pushData(output);
         },
         input,
@@ -278,6 +277,7 @@ Apify.main(async () => {
         gotoFunction: async ({ page, request, puppeteerPool, session }) => {
             await puppeteer.blockRequests(page, {
                 extraUrlPatterns: [
+                    '.css.map',
                     // 'maps.googleapis.com', // needed
                     'www.googletagservices.com',
                     'www.google-analytics.com',
@@ -292,6 +292,7 @@ Apify.main(async () => {
                     'px-cloud.net',
                     'fonts.googleapis.com',
                     'photos.zillowstatic.com',
+                    'survata.com',
                 ],
             });
 
@@ -332,9 +333,17 @@ Apify.main(async () => {
              * @param {string} zpid
              */
             const processZpid = async (zpid) => {
+                if (isOverItems()) {
+                    return;
+                }
+
                 if (!session.isUsable()) {
                     await retire();
                     throw 'Retiring session';
+                }
+
+                if (zpids.has(`${zpid}`)) {
+                    return;
                 }
 
                 try {
@@ -357,7 +366,7 @@ Apify.main(async () => {
                             label: LABELS.DETAIL,
                             zpid,
                         },
-                    });
+                    }, { forefront: true });
                 }
             };
 
@@ -391,6 +400,7 @@ Apify.main(async () => {
                 }
 
                 log.info(`Extracting data from ${request.url}`);
+                let noScriptsFound = true;
 
                 try {
                     for (const script of scripts) {
@@ -404,7 +414,8 @@ Apify.main(async () => {
                                     zpid: request.userData.zpid,
                                 });
 
-                                return; // success
+                                noScriptsFound = false;
+                                break;
                             }
                         }
                     }
@@ -413,7 +424,9 @@ Apify.main(async () => {
                     await retire();
                 }
 
-                throw 'Failed to load preloaded data';
+                if (noScriptsFound) {
+                    throw 'Failed to load preloaded data';
+                }
             } else if (label === LABELS.ZPIDS) {
                 // Extract all homes by input ZPIDs
                 const start = request.userData.start || 0;
@@ -424,6 +437,10 @@ Apify.main(async () => {
                 for (let i = start; i < input.zpids.length; i++) {
                     const zpid = input.zpids[i];
                     await processZpid(zpid);
+
+                    if (isOverItems(i)) {
+                        break;
+                    }
                 }
             } else if (label === LABELS.QUERY || label === LABELS.SEARCH) {
                 if (label === LABELS.SEARCH) {
@@ -443,7 +460,7 @@ Apify.main(async () => {
                     await sleep(3000);
 
                     await Promise.all([
-                        page.waitForNavigation({ timeout: 30000 }),
+                        page.waitForNavigation({ timeout: 60000 }),
                         page.click(btn),
                     ]);
 
@@ -452,15 +469,10 @@ Apify.main(async () => {
                     }
                 }
 
-                try {
-                    await page.waitForSelector('script[data-zrr-shared-data-key="mobileSearchPageStore"]');
-                } catch (e) {
-                    log.debug(e);
-                }
-
                 // Get initial searchState
                 let qs = request.userData.queryState;
                 let searchState;
+                let shouldContinue = true;
 
                 try {
                     const pageQs = await page.evaluate(() => {
@@ -478,98 +490,101 @@ Apify.main(async () => {
                     const results = _.get(pageQs, 'cat1.searchResults.listResults', []);
 
                     if (results.length) {
-                        log.info(`Got first ${results.length} results...`);
+                        log.info(`Going to parse ${results.length} results...`);
                     }
 
                     for (const { zpid } of results) {
                         if (zpid) {
+                            if (isOverItems()) {
+                                shouldContinue = false;
+                                break;
+                            }
                             await processZpid(zpid);
                         }
                     }
 
-                    qs = qs || pageQs.queryState;
+                    if (shouldContinue) {
+                        qs = qs || pageQs.queryState;
 
-                    searchState = JSON.parse(await page.evaluate(
-                        queryRegionHomes,
-                        { qs, type: input.type },
-                    ));
+                        if (!qs) {
+                            throw 'Query state is empty';
+                        }
+
+                        searchState = JSON.parse(await page.evaluate(
+                            queryRegionHomes,
+                            { qs, type: input.type },
+                        ));
+                    }
                 } catch (e) {
                     await retire();
                     log.debug(e);
-                    throw 'Unable to get searchState, retrying...';
+                    throw `Unable to get searchState, retrying...\n${e.message | e}`;
                 }
 
-                // Check mapResults
-                const { mapResults } = searchState.searchResults;
-                if (!mapResults) {
-                    throw `No map results at ${JSON.stringify(qs.mapBounds)}`;
-                }
+                if (shouldContinue && !isOverItems()) {
+                    // Check mapResults
+                    const { mapResults } = searchState.searchResults;
+                    if (!mapResults) {
+                        throw `No map results at ${JSON.stringify(qs.mapBounds)}`;
+                    }
 
-                if (isOverItems()) {
-                    return;
-                }
+                    log.info(`Searching homes at ${JSON.stringify(qs.mapBounds)}`);
 
-                log.info(`Searching homes at ${JSON.stringify(qs.mapBounds)}`);
+                    // Extract home data from mapResults
+                    const thr = input.splitThreshold || 500;
 
-                // Extract home data from mapResults
-                const thr = input.splitThreshold || 500;
+                    if (
+                        mapResults.length < thr
+                        || input.maxLevel === 0
+                        || (input.maxLevel
+                            && (request.userData.splitCount || 0) >= input.maxLevel)
+                    ) {
+                        if (mapResults.length > 0) {
+                            log.info(
+                                `Found ${mapResults.length} homes, extracting data...`,
+                            );
 
-                if (
-                    mapResults.length < thr
-                    || input.maxLevel === 0
-                    || (input.maxLevel
-                        && (request.userData.splitCount || 0) >= input.maxLevel)
-                ) {
-                    if (mapResults.length > 0) {
-                        log.info(
-                            `Found ${mapResults.length} homes, extracting data...`,
-                        );
-                        const start = request.userData.start || 0;
-                        if (start) {
-                            log.info(`Starting at ${start}`);
-                        }
+                            const extracted = () => {
+                                log.info(`Extracted total ${zpids.size}`);
+                            };
+                            const interval = setInterval(extracted, 10000);
 
-                        let counting = start;
+                            try {
+                                for (const { zpid } of mapResults) {
+                                    if (zpid) {
+                                        await processZpid(zpid);
 
-                        const extracted = () => {
-                            log.info(`Extracted total ${zpids.size}, current ${counting} items`);
-                        };
-                        const interval = setInterval(extracted, 10000);
-
-                        try {
-                            for (; counting < mapResults.length; counting++) {
-                                const home = mapResults[counting];
-                                if (home.zpid && !zpids.has(home.zpid)) {
-                                    await processZpid(home.zpid);
-
-                                    if (isOverItems()) {
-                                        return; // optimize runtime
+                                        if (isOverItems()) {
+                                            break; // optimize runtime
+                                        }
                                     }
                                 }
+                            } finally {
+                                extracted();
+                                clearInterval(interval);
                             }
-                        } finally {
-                            extracted();
-                            clearInterval(interval);
                         }
-                    }
-                } else {
-                    // Split map and enqueue sub-rectangles
-                    log.info(`Found more than ${thr} homes, splitting map...`);
-                    for (const queryState of splitQueryState(qs)) {
-                        const splitCount = (request.userData.splitCount || 0) + 1;
+                    } else {
+                        // Split map and enqueue sub-rectangles
+                        log.info(`Found more than ${thr} homes, splitting map...`);
+                        let localCount = 0;
 
-                        await requestQueue.addRequest({
-                            url: request.url,
-                            userData: {
-                                queryState,
-                                label: LABELS.QUERY,
-                                splitCount,
-                            },
-                            uniqueKey: `${request.url}${splitCount}${quickHash(queryState)}`,
-                        });
+                        for (const queryState of splitQueryState(qs)) {
+                            const splitCount = (request.userData.splitCount || 0) + 1;
 
-                        if (isOverItems(localCount++ * thr)) {
-                            break;
+                            await requestQueue.addRequest({
+                                url: request.url,
+                                userData: {
+                                    queryState,
+                                    label: LABELS.QUERY,
+                                    splitCount,
+                                },
+                                uniqueKey: quickHash(`${request.url}${splitCount}${queryState}`),
+                            });
+
+                            if (isOverItems(localCount++ * thr)) {
+                                break;
+                            }
                         }
                     }
                 }
