@@ -31,7 +31,6 @@ Apify.main(async () => {
     const proxyConfig = await proxyConfiguration({
         proxyConfig: {
             ...input.proxyConfiguration,
-            countryCode: 'US',
         },
         hint: ['RESIDENTIAL'],
     });
