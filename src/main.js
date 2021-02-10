@@ -342,7 +342,7 @@ Apify.main(async () => {
 
                 try {
                     if (!session.isUsable()) {
-                        await retire();
+                        session.retire();
                         throw 'Retiring session';
                     }
 
