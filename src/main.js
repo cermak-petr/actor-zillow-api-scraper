@@ -336,16 +336,16 @@ Apify.main(async () => {
                     return;
                 }
 
-                if (!session.isUsable()) {
-                    await retire();
-                    throw 'Retiring session';
-                }
-
                 if (zpids.has(`${zpid}`)) {
                     return;
                 }
 
                 try {
+                    if (!session.isUsable()) {
+                        await retire();
+                        throw 'Retiring session';
+                    }
+
                     await extendOutputFunction(
                         JSON.parse(await queryZpid(page, zpid)).data.property,
                         {
@@ -512,7 +512,7 @@ Apify.main(async () => {
                 } catch (e) {
                     await retire();
                     log.debug(e);
-                    throw `Unable to get searchState, retrying...\n${e.message | e}`;
+                    throw `Unable to get searchState, retrying...\n${e.message || e}`;
                 }
 
                 if (shouldContinue && !isOverItems()) {
