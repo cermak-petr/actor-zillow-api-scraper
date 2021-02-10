@@ -428,16 +428,11 @@ Apify.main(async () => {
                 }
             } else if (label === LABELS.ZPIDS) {
                 // Extract all homes by input ZPIDs
-                const start = request.userData.start || 0;
-                if (start) {
-                    log.info(`Starting at ${start}`);
-                }
 
-                for (let i = start; i < input.zpids.length; i++) {
-                    const zpid = input.zpids[i];
+                for (const zpid of input.zpids) {
                     await processZpid(zpid);
 
-                    if (isOverItems(i)) {
+                    if (isOverItems()) {
                         break;
                     }
                 }
