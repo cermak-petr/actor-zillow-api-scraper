@@ -3,8 +3,10 @@
     "version": "0.0.1",
     "dependencies": {
         "apify": "^0.22.4",
-        "puppeteer": "^5.5.0",
         "lodash": "^4.17.20"
+    },
+    "peerDependencies": {
+        "puppeteer": "^5.5.0"
     },
     "devDependencies": {
         "@types/lodash": "^4.14.168",
