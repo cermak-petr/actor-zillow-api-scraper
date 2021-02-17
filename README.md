@@ -44,6 +44,7 @@ If the `simple` attribute is set, an example result may look like this:
   "bedrooms": 6,
   "bathrooms": 3.5,
   "price": 300,
+  "homeStatus": "SOLD",
   "longitude": -85.626183,
   "latitude": 42.29457,
   "description": "Rent: $300.00/bed Student Housing. This is a 3-unit complex within close proximity to WMU consisting of 6 bedrooms and 3.5 baths throughout three levels in each unit. The main level features 1 of the 6 bedrooms, 1/2 bath, a roomy living room, kitchen with an eating area, and entry to your private deck. The upper level features 3 bedrooms, 2 full baths and a laundry area with a full size washer and dryer. The lower level features 2 bedrooms, 1 full bath and a bonus 2nd living area to use for socializing, gaming, studying, etc. All bedrooms are good-size and privately keyed. trash, lawn and snow plowing services included. Pet friendly with prior management approval and pet rent. Cats Allowed\nOven\nParking\nResident Pays Electricity\nResident Pays Gas\nResident Pays Water\nSmall Dogs Allowed\nSmoke Free\nTrash Pick Up Included\nUnfurnished\nWasher & Dryer",
@@ -90,15 +91,20 @@ You can use this function to achieve 3 different things:
 
 ```js
 async ({ item, data }) => {
-    item.schools = data.schools;
-    item.homeStatus = data.homeStatus;
-    item.address = undefined;
+  if (!item.schools) {
+    return null; // omit output
+  }
 
-    return item; // need to return the item here
+  item.schools = data.schools; // add new array data
+  item.photos = undefined; // remove the photos array from the output, making it CSV friendly
+  delete item.photos; // works as well
+
+  return item; // need to return the item here, otherwise your dataset willbe empty
 }
 ```
 
-This example will add a new field `schools`, change the `homeStatus` field and remove the `address` field
+This example will add a new field `schools`, remove the `photos` field and
+omit the output if there's no `schools` information
 
 ### Extend Scraper function
 
@@ -120,5 +126,6 @@ async ({ state, request, requestQueue, Apify, LABELS, TYPES, processZpids, query
 ```
 
 ### Epilogue
+
 Thank you for trying my actor. You can send any feedback you have to my email `cermak.petr6@gmail.com`.
 If you find any bug, please create an issue on the [Github page](https://github.com/cermak-petr/actor-zillow-api-scraper).
