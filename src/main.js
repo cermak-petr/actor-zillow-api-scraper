@@ -50,6 +50,7 @@ Apify.main(async () => {
                 price: true,
                 yearBuilt: true,
                 longitude: true,
+                homeStatus: true,
                 latitude: true,
                 description: true,
                 livingArea: true,
