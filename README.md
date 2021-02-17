@@ -91,7 +91,7 @@ You can use this function to achieve 3 different things:
 
 ```js
 async ({ item, data }) => {
-  if (!item.schools) {
+  if (!data.schools || !data.schools.length) {
     return null; // omit output
   }
 
