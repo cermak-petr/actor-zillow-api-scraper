@@ -252,12 +252,19 @@ Apify.main(async () => {
         },
     });
 
+    await extendScraperFunction(undefined, {
+        label: 'SETUP',
+    });
+
     // Create crawler
     const crawler = new Apify.PuppeteerCrawler({
         requestQueue,
         maxRequestRetries: input.maxRetries || 20,
         handlePageTimeoutSecs: input.handlePageTimeoutSecs || 3600,
         useSessionPool: true,
+        puppeteerPoolOptions: {
+            maxOpenPagesPerInstance: 1,
+        },
         proxyConfiguration: proxyConfig,
         launchPuppeteerFunction: async (options) => {
             return Apify.launchPuppeteer({
@@ -304,6 +311,12 @@ Apify.main(async () => {
                 },
             });
 
+            await extendScraperFunction(undefined, {
+                page,
+                request,
+                label: 'GOTO',
+            });
+
             try {
                 return await page.goto(request.url, {
                     waitUntil: 'load',
@@ -327,6 +340,8 @@ Apify.main(async () => {
                 await retire();
                 throw 'Captcha found, retrying...';
             }
+
+            let anyErrors = false;
 
             /**
              * Extract home data by ZPID
@@ -356,6 +371,7 @@ Apify.main(async () => {
                         },
                     );
                 } catch (e) {
+                    anyErrors = true;
                     session.markBad();
                     log.debug('processZpid', { error: e });
 
@@ -381,18 +397,18 @@ Apify.main(async () => {
 
                 queryZpid = createQueryZpid(queryId, clientVersion, await page.cookies());
 
+                if (!isDebug) {
+                    autoscaledPool.maxConcurrency = 100;
+                }
+
                 // now that we initialized, we can add the requests
                 for (const req of startUrls) {
                     await requestQueue.addRequest(req);
                 }
 
                 log.info('Got queryId, continuing...');
-
-                if (!isDebug) {
-                    autoscaledPool.maxConcurrency = 100;
-                }
             } else if (label === LABELS.DETAIL) {
-                const scripts = await page.$x('//script[contains(., "RenderQuery")]');
+                const scripts = await page.$x('//script[contains(., "RenderQuery") and contains(., "apiCache")]');
 
                 if (!scripts.length) {
                     await retire();
@@ -520,6 +536,7 @@ Apify.main(async () => {
                     // Check mapResults
                     const { mapResults } = searchState.searchResults;
                     if (!mapResults) {
+                        await retire();
                         throw `No map results at ${JSON.stringify(qs.mapBounds)}`;
                     }
 
@@ -592,7 +609,13 @@ Apify.main(async () => {
                 processZpid,
                 queryZpid,
                 queryRegionHomes,
+                label: 'HANDLE',
             });
+
+            if (anyErrors) {
+                await retire();
+                throw 'Retiring session and browser...';
+            }
         },
         handleFailedRequestFunction: async ({ request }) => {
             // This function is called when the crawling of a request failed too many times
@@ -602,6 +625,11 @@ Apify.main(async () => {
 
     // Start crawling
     await crawler.run();
+
+    await extendScraperFunction(undefined, {
+        label: 'FINISH',
+        crawler,
+    });
 
     log.info('Done!');
 });

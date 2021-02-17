@@ -76,8 +76,8 @@
             "title": "Extend output function",
             "type": "string",
             "editor": "javascript",
-            "description": "A function which result will get merged with the default result",
-            "prefill": "({ data, item, customData, Apify, ds }) => {\n    return item;\n}",
+            "description": "Extend the output item to contain more fields. The raw data is present in the 'data' variable.",
+            "prefill": "({ data, item, customData, Apify }) => {\n    return item;\n}",
             "sectionCaption": "Extend scraper functionality",
             "sectionDescription": "You can change the output of the items for your dataset here, or add additional behavior on the scraper."
         },
@@ -86,7 +86,7 @@
             "description": "Advanced function that allows you to extend the default scraper functionality, allowing you to manually perform actions on the page",
             "type": "string",
             "default": "",
-            "prefill": "async ({ request, customData, page, ds, requestQueue, processZpid, queryZpid, Apify }) => {\n \n}",
+            "prefill": "async ({ label, page, request, customData, Apify }) => {\n    if (label === 'SETUP') {\n        // before crawler.run()\n    } else if (label === 'GOTO') {\n        // inside handleGotoFunction\n    } else if (label === 'HANDLE') {\n        // inside handlePageFunction\n    } else if (label === 'FINISH') {\n        // after crawler.run()\n    }\n}",
             "editor": "javascript"
         },
         "customData": {
