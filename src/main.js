@@ -619,7 +619,7 @@ Apify.main(async () => {
         },
         handleFailedRequestFunction: async ({ request }) => {
             // This function is called when the crawling of a request failed too many times
-            log.error(`Request ${request.url} failed too many times.`);
+            log.error(`\n\nRequest ${request.url} failed too many times.\n\n`);
         },
     });
 

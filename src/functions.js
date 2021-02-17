@@ -194,16 +194,13 @@ const queryRegionHomes = async ({ qs, type }) => {
     const resp = await fetch(`https://www.zillow.com/search/GetSearchPageState.htm?searchQueryState=${encodeURIComponent(JSON.stringify(qs))}`, {
         body: null,
         headers: {
-            'Cache-Control': 'no-cache',
-            DNT: '1',
-            Accept: '*/*',
-            Origin: document.location.origin,
-            Pragma: 'no-cache',
-            Referer: document.location.href,
+            dnt: '1',
+            accept: '*/*',
+            origin: document.location.origin,
+            referer: `${document.location.origin}/`,
         },
         method: 'GET',
         mode: 'cors',
-        credentials: 'omit',
     });
 
     if (resp.status !== 200) {
@@ -243,13 +240,11 @@ const createQueryZpid = (queryId, clientVersion, cookies) => (page, zpid) => {
             method: 'POST',
             body,
             headers: {
-                'Cache-Control': 'no-cache',
-                DNT: '1',
-                Accept: '*/*',
-                'Content-Type': 'text/plain',
-                Origin: document.location.origin,
-                Pragma: 'no-cache',
-                Referer: document.location.href,
+                dnt: '1',
+                accept: '*/*',
+                'content-type': 'text/plain',
+                origin: document.location.origin,
+                referer: `${document.location.origin}/`,
             },
             mode: 'cors',
             credentials: 'omit',
