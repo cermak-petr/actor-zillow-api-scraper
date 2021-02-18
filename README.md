@@ -127,5 +127,4 @@ async ({ state, request, requestQueue, Apify, LABELS, TYPES, processZpids, query
 
 ### Epilogue
 
-Thank you for trying my actor. You can send any feedback you have to my email `cermak.petr6@gmail.com`.
-If you find any bug, please create an issue on the [Github page](https://github.com/cermak-petr/actor-zillow-api-scraper).
+Thank you for trying my actor. If you have any feedback or  if you find any bug, please create an issue on the [Github page](https://github.com/cermak-petr/actor-zillow-api-scraper).
