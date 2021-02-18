@@ -20,6 +20,7 @@ const TYPES = {
     fsbo: 'fsbo',
     sale: 'sale',
     sold: 'sold',
+    qs: 'qs',
 };
 
 const USER_AGENT = platform() === 'win32'

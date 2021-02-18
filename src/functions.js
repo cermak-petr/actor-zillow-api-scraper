@@ -114,6 +114,10 @@ const interceptQueryId = async (page) => {
  * @param {{ mapBounds: { mapZoom: number, south: number, east: number, north: number, west: number } }} queryState
  */
 const splitQueryState = (queryState) => {
+    if (typeof queryState !== 'object') {
+        return [];
+    }
+
     const qs = queryState;
     const mb = qs.mapBounds;
     const states = [{ ...qs }, { ...qs }, { ...qs }, { ...qs }];
@@ -189,7 +193,13 @@ const queryRegionHomes = async ({ qs, type }) => {
             isPreMarketPreForeclosure: { value: true },
             isForSaleByAgent: { value: true },
         };
+    } else if (type === 'qs') {
+        qs.filterState.isAllHomes = { value: true };
     }
+
+    try {
+        delete qs.filterState.ah;
+    } catch (e) {}
 
     const resp = await fetch(`https://www.zillow.com/search/GetSearchPageState.htm?searchQueryState=${encodeURIComponent(JSON.stringify(qs))}`, {
         body: null,
@@ -207,7 +217,10 @@ const queryRegionHomes = async ({ qs, type }) => {
         throw `Got ${resp.status} from query`;
     }
 
-    return (await resp.blob()).text();
+    return {
+        body: await (await resp.blob()).text(),
+        qs,
+    };
 };
 
 /**
