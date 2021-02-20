@@ -212,6 +212,10 @@ Apify.main(async () => {
                 return false;
             }
 
+            if (!_.get(data, 'zpid')) {
+                return false;
+            }
+
             return (minTime ? data.datePosted <= minTime : true)
                 && !zpids.has(`${data.zpid}`);
         },
@@ -254,9 +258,17 @@ Apify.main(async () => {
         },
     });
 
+    const dump = Apify.utils.log.LEVELS.DEBUG === Apify.utils.log.getLevel() ? async (zpid, data) => {
+        if (typeof zpid !== 'number') {
+            await Apify.setValue(`DUMP-${Math.random()}`, data);
+        }
+    } : () => {};
+
     await extendScraperFunction(undefined, {
         label: 'SETUP',
     });
+
+    let isFinishing = false;
 
     // Create crawler
     const crawler = new Apify.PuppeteerCrawler({
@@ -281,9 +293,17 @@ Apify.main(async () => {
             });
         },
         puppeteerPoolOptions: {
-            maxOpenPagesPerInstance: 5, // too many connections on the same proxy = captcha
+            maxOpenPagesPerInstance: 1, // too many connections on the same proxy/session = captcha
         },
         gotoFunction: async ({ page, request, puppeteerPool, session }) => {
+            if (isOverItems()) {
+                if (!isFinishing) {
+                    isFinishing = true;
+                    log.info('Reached max items, waiting for finish...');
+                }
+                return null;
+            }
+
             await puppeteer.blockRequests(page, {
                 extraUrlPatterns: [
                     '.css.map',
@@ -335,7 +355,12 @@ Apify.main(async () => {
             }
         },
         maxConcurrency: 1,
-        handlePageFunction: async ({ page, request, puppeteerPool, autoscaledPool, session }) => {
+        handlePageFunction: async ({ page, request, puppeteerPool, autoscaledPool, session, response }) => {
+            if (!response) {
+                // response is null when goto is null
+                return;
+            }
+
             const retire = async () => {
                 session.retire();
                 await puppeteerPool.retire(page.browser());
@@ -352,17 +377,22 @@ Apify.main(async () => {
             /**
              * Extract home data by ZPID
              * @param {string} zpid
+             * @param {string} detailUrl
              */
-            const processZpid = async (zpid) => {
+            const processZpid = async (zpid, detailUrl) => {
                 if (isOverItems()) {
                     return;
                 }
 
-                if (zpids.has(`${zpid}`)) {
-                    return;
-                }
-
                 try {
+                    if (+zpid != zpid) {
+                        throw 'Invalid non-numeric zpid';
+                    }
+
+                    if (zpids.has(`${zpid}`)) {
+                        return;
+                    }
+
                     if (!session.isUsable()) {
                         throw 'Not trying to retrieve data';
                     }
@@ -382,12 +412,12 @@ Apify.main(async () => {
 
                     // add as a separate detail for retrying
                     await requestQueue.addRequest({
-                        url: `https://www.zillow.com/homedetails/${zpid}_zpid/`,
+                        url: new URL(detailUrl || `/homedetails/${zpid}_zpid/`, 'https://www.zillow.com').toString(),
                         userData: {
                             label: LABELS.DETAIL,
-                            zpid,
+                            zpid: +zpid,
                         },
-                    });
+                    }, { forefront: true });
                 }
             };
 
@@ -402,7 +432,7 @@ Apify.main(async () => {
 
                 queryZpid = createQueryZpid(queryId, clientVersion, await page.cookies());
 
-                autoscaledPool.maxConcurrency = 100;
+                autoscaledPool.maxConcurrency = 10;
 
                 // now that we initialized, we can add the requests
                 for (const req of startUrls) {
@@ -411,6 +441,41 @@ Apify.main(async () => {
 
                 log.info('Got queryId, continuing...');
             } else if (label === LABELS.DETAIL) {
+                if (isOverItems()) {
+                    return;
+                }
+
+                if (request.url.startsWith('/b/') || !+request.userData.zpid) {
+                    const nextData = await page.$eval('[id="__NEXT_DATA__"]', (s) => JSON.parse(s.innerHTML));
+
+                    if (!nextData) {
+                        throw 'Missing data';
+                    }
+
+                    // legacy layout, need re-enqueue
+                    const zpid = _.get(nextData, 'props.initialData.building.zpid');
+
+                    if (zpid) {
+                        const url = `https://www.zillow.com/homedetails/${zpid}_zpid/`;
+
+                        const rq = await requestQueue.addRequest({
+                            url,
+                            userData: {
+                                label: LABELS.DETAIL,
+                                zpid: +zpid,
+                            },
+                        }, { forefront: true });
+
+                        if (!rq.wasAlreadyPresent) {
+                            log.info(`Re-enqueueing ${url}`);
+                        }
+
+                        return;
+                    }
+
+                    throw 'ZPID not found in page';
+                }
+
                 const scripts = await page.$x('//script[contains(., "RenderQuery") and contains(., "apiCache")]');
 
                 if (!scripts.length) {
@@ -450,7 +515,7 @@ Apify.main(async () => {
                 // Extract all homes by input ZPIDs
 
                 for (const zpid of input.zpids) {
-                    await processZpid(zpid);
+                    await processZpid(zpid, '');
 
                     if (isOverItems()) {
                         break;
@@ -503,17 +568,15 @@ Apify.main(async () => {
 
                     const results = _.get(pageQs, 'cat1.searchResults.listResults', []);
 
-                    if (results.length) {
-                        log.info(`Going to parse ${results.length} results...`);
-                    }
+                    for (const { zpid, detailUrl } of results) {
+                        await dump(zpid, results);
 
-                    for (const { zpid } of results) {
                         if (zpid) {
                             if (isOverItems()) {
                                 shouldContinue = false;
                                 break;
                             }
-                            await processZpid(zpid);
+                            await processZpid(zpid, detailUrl);
                         }
                     }
 
@@ -569,9 +632,11 @@ Apify.main(async () => {
                                 ...splitQueryState(request.userData.queryState),
                             ];
 
-                            log.info(`Found more than ${thr} homes, splitting map in ${split.length}...`);
-
                             for (const queryState of split) {
+                                if (isOverItems()) {
+                                    break;
+                                }
+
                                 const uniqueKey = quickHash(`${request.url}${splitCount}${JSON.stringify(queryState)}`);
                                 log.debug('queryState', { queryState, uniqueKey });
 
@@ -583,25 +648,23 @@ Apify.main(async () => {
                                         splitCount,
                                     },
                                     uniqueKey,
-                                }, { forefront: true });
+                                });
                             }
                         }
                     }
 
                     if (mapResults.length > 0) {
-                        log.info(
-                            `Found ${mapResults.length} homes, extracting data...`,
-                        );
-
                         const extracted = () => {
                             log.info(`Extracted total ${zpids.size}`);
                         };
                         const interval = setInterval(extracted, 10000);
 
                         try {
-                            for (const { zpid } of mapResults) {
+                            for (const { zpid, detailUrl } of mapResults) {
+                                await dump(zpid, mapResults);
+
                                 if (zpid) {
-                                    await processZpid(zpid);
+                                    await processZpid(zpid, detailUrl);
 
                                     if (isOverItems()) {
                                         break; // optimize runtime
@@ -609,7 +672,9 @@ Apify.main(async () => {
                                 }
                             }
                         } finally {
-                            extracted();
+                            if (!anyErrors) {
+                                extracted();
+                            }
                             clearInterval(interval);
                         }
                     }

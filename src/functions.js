@@ -308,9 +308,12 @@ const quickHash = (data) => createHash('sha256').update(JSON.stringify(data)).di
 const getUrlData = (url) => {
     const nUrl = new URL(url, 'https://www.zillow.com');
 
-    if (/\/\d+_zpid/.test(nUrl.pathname)) {
+    if (/\/\d+_zpid/.test(nUrl.pathname) || nUrl.pathname.startsWith('/b/')) {
+        const zpid = nUrl.pathname.match(/\/(\d+)_zpid/);
+
         return {
             label: LABELS.DETAIL,
+            zpid: zpid && zpid[1] ? +zpid[1] : '',
         };
     }
 
