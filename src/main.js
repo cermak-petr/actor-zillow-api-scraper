@@ -11,6 +11,7 @@ const {
     quickHash,
     getUrlData,
     extendFunction,
+    makeInputBackwardsCompatible,
 } = require('./functions');
 
 const { log, puppeteer, sleep } = Apify.utils;
@@ -139,6 +140,9 @@ Apify.main(async () => {
     Apify.events.on('migrating', async () => {
         await Apify.setValue('STATE', [...zpids.values()]);
     });
+
+    // TODO: temp hack to get around empty output. remove this after merge to master
+    makeInputBackwardsCompatible(input);
 
     const requestQueue = await Apify.openRequestQueue();
 

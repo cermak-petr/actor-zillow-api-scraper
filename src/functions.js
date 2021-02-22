@@ -6,6 +6,15 @@ const { TYPES, LABELS } = require('./constants');
 
 const { sleep } = Apify.utils;
 
+/**
+ * @param {Record<string,any>} input
+ */
+const makeInputBackwardsCompatible = (input) => {
+    if (input && input.extendOutputFunction === '(data) => {\n    return {};\n}') {
+        input.extendOutputFunction = '';
+    }
+};
+
 const deferred = () => {
     /** @type {(...args: any) => void} */
     let resolve = () => { };
@@ -455,4 +464,5 @@ module.exports = {
     proxyConfiguration,
     quickHash,
     getUrlData,
+    makeInputBackwardsCompatible,
 };
