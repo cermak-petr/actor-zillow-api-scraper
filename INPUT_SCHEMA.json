@@ -108,7 +108,7 @@
         "stealth": {
             "title": "Stealth",
             "description": "Apply stealth to the browser",
-            "default": false,
+            "default": true,
             "type": "boolean",
             "editor": "checkbox"
         }

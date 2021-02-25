@@ -201,7 +201,7 @@ Apify.main(async () => {
         userData: {
             label: LABELS.INITIAL,
         },
-    });
+    }, { forefront: true });
 
     const isOverItems = (extra = 0) => (typeof input.maxItems === 'number' && input.maxItems > 0
         ? (zpids.size + extra) >= input.maxItems
