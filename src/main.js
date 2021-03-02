@@ -449,6 +449,8 @@ Apify.main(async () => {
                     return;
                 }
 
+                log.info(`Scraping ${page.url()}`);
+
                 if (request.url.startsWith('/b/') || !+request.userData.zpid) {
                     const nextData = await page.$eval('[id="__NEXT_DATA__"]', (s) => JSON.parse(s.innerHTML));
 
@@ -517,6 +519,7 @@ Apify.main(async () => {
                 }
             } else if (label === LABELS.ZPIDS) {
                 // Extract all homes by input ZPIDs
+                log.info(`Scraping ${input.zpids.length} zpids`);
 
                 for (const zpid of input.zpids) {
                     await processZpid(zpid, '');
