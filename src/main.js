@@ -297,6 +297,7 @@ Apify.main(async () => {
             });
         },
         puppeteerPoolOptions: {
+            useIncognitoPages: true,
             maxOpenPagesPerInstance: 1, // too many connections on the same proxy/session = captcha
         },
         gotoFunction: async ({ page, request, puppeteerPool, session }) => {
@@ -436,7 +437,7 @@ Apify.main(async () => {
 
                 queryZpid = createQueryZpid(queryId, clientVersion, await page.cookies());
 
-                autoscaledPool.maxConcurrency = 10;
+                autoscaledPool.maxConcurrency = 1;
 
                 // now that we initialized, we can add the requests
                 for (const req of startUrls) {
@@ -484,16 +485,18 @@ Apify.main(async () => {
 
                 const scripts = await page.$x('//script[contains(., "RenderQuery") and contains(., "apiCache")]');
 
+                // await Apify.setValue(`${request.userData.zpid}--${Math.random()}`, await page.content(), { contentType: 'text/html' });
+
                 if (!scripts.length) {
                     await retire();
-                    throw 'Failed to load preloaded data';
+                    throw 'Failed to load preloaded data scripts';
                 }
 
                 log.info(`Extracting data from ${request.url}`);
                 let noScriptsFound = true;
 
-                try {
-                    for (const script of scripts) {
+                for (const script of scripts) {
+                    try {
                         const loaded = JSON.parse(JSON.parse(await script.evaluate((s) => s.innerHTML)).apiCache);
 
                         for (const key in loaded) { // eslint-disable-line
@@ -508,14 +511,17 @@ Apify.main(async () => {
                                 break;
                             }
                         }
+                    } catch (e) {
+                        if (e.message.includes('Cannot read property')) {
+                            // this is a faulty extend output function
+                            log.error(`Your Extend Output Function errored:\n\n    ${e}\n\n`, { url: page.url() });
+                        }
+                        log.debug(e);
                     }
-                } catch (e) {
-                    log.debug(e);
-                    await retire();
                 }
 
                 if (noScriptsFound) {
-                    throw 'Failed to load preloaded data';
+                    throw 'Failed to load preloaded data from page';
                 }
             } else if (label === LABELS.ZPIDS) {
                 // Extract all homes by input ZPIDs
@@ -533,7 +539,7 @@ Apify.main(async () => {
                     log.info(`Searching for "${request.userData.term}"`);
 
                     const text = '#search-box-input';
-                    const btn = '[aria-label="Submit Search"]';
+                    const btn = 'button#search-icon';
 
                     await Promise.all([
                         page.waitForSelector(text),
@@ -545,13 +551,24 @@ Apify.main(async () => {
 
                     await sleep(3000);
 
-                    await Promise.all([
-                        page.waitForNavigation({ timeout: 60000 }),
-                        page.click(btn),
-                    ]);
+                    try {
+                        await Promise.all([
+                            page.waitForNavigation({ timeout: 15000 }),
+                            page.tap(btn),
+                        ]);
+                    } catch (e) {
+                        await retire();
+                        throw `Search didn't redirect, retrying...`;
+                    }
 
-                    if (!/(\/homes\/|_rb)/.test(page.url()) || page.url().includes('/homes/_rb/') || await page.$('.captcha-container')) {
-                        throw 'Page didn\'t load properly, retrying...';
+                    if (!/(\/homes\/|_rb)/.test(page.url()) || page.url().includes('/_rb/')) {
+                        await retire();
+                        throw `Unexpected page address ${page.url()}, use a better keyword for searching or proper state or city name. Will retry...`;
+                    }
+
+                    if (await page.$('.captcha-container')) {
+                        await retire();
+                        throw `Captcha found when searching, retrying...`;
                     }
                 }
 
