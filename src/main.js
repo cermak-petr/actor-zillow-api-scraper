@@ -281,34 +281,22 @@ Apify.main(async () => {
         handlePageTimeoutSecs: input.handlePageTimeoutSecs || 3600,
         useSessionPool: true,
         proxyConfiguration: proxyConfig,
-        launchPuppeteerFunction: async (options) => {
-            return Apify.launchPuppeteer({
-                ...options,
-                userAgent: USER_AGENT,
+        launchContext: {
+            launchOptions: {
                 args: [
-                    ...options.args,
                     '--enable-features=NetworkService',
                     '--ignore-certificate-errors',
                     '--disable-blink-features=AutomationControlled', // removes webdriver from window.navigator
                 ],
                 devtools: isDebug,
                 ignoreHTTPSErrors: true,
-                stealth: input.stealth || false,
-            });
+                useIncognitoPages: true,
+                maxOpenPagesPerInstance: 1, // too many connections on the same proxy/session = captcha
+            },
+            stealth: input.stealth || false,
+            userAgent: USER_AGENT,
         },
-        puppeteerPoolOptions: {
-            useIncognitoPages: true,
-            maxOpenPagesPerInstance: 1, // too many connections on the same proxy/session = captcha
-        },
-        gotoFunction: async ({ page, request, puppeteerPool, session }) => {
-            if (isOverItems()) {
-                if (!isFinishing) {
-                    isFinishing = true;
-                    log.info('Reached max items, waiting for finish...');
-                }
-                return null;
-            }
-
+        preNavigationHooks: [async ({ request, page }, gotoOptions) => {
             await puppeteer.blockRequests(page, {
                 extraUrlPatterns: [
                     '.css.map',
@@ -326,18 +314,12 @@ Apify.main(async () => {
                     'fonts.googleapis.com',
                     'photos.zillowstatic.com',
                     'survata.com',
+                    '/collector',
+                    'ct.pinterest.com',
                 ].concat(request.userData.label === LABELS.DETAIL ? [
                     'maps.googleapis.com',
                     '.js',
                 ] : []),
-            });
-
-            await page.emulate({
-                userAgent: USER_AGENT,
-                viewport: {
-                    height: 1080,
-                    width: 1920,
-                },
             });
 
             await extendScraperFunction(undefined, {
@@ -346,21 +328,13 @@ Apify.main(async () => {
                 label: 'GOTO',
             });
 
-            try {
-                return await page.goto(request.url, {
-                    waitUntil: request.userData.label === LABELS.DETAIL
-                        ? 'domcontentloaded'
-                        : 'load',
-                    timeout: 60000,
-                });
-            } catch (e) {
-                session.retire();
-                await puppeteerPool.retire(page.browser());
-                throw e;
-            }
-        },
+            gotoOptions.timeout = 60000;
+            gotoOptions.waitUntil = request.userData.label === LABELS.DETAIL
+                ? 'domcontentloaded'
+                : 'load';
+        }],
         maxConcurrency: 1,
-        handlePageFunction: async ({ page, request, puppeteerPool, autoscaledPool, session, response }) => {
+        handlePageFunction: async ({ page, request, crawler: { autoscaledPool }, browserController, session, response }) => {
             if (!response) {
                 // response is null when goto is null
                 return;
@@ -368,7 +342,7 @@ Apify.main(async () => {
 
             const retire = async () => {
                 session.retire();
-                await puppeteerPool.retire(page.browser());
+                await browserController.close();
             };
 
             // Retire browser if captcha is found
@@ -623,19 +597,31 @@ Apify.main(async () => {
                             },
                         );
 
+                        log.debug('query', result.qs);
+
                         searchState = JSON.parse(result.body);
                         qs = result.qs;
                     }
                 } catch (e) {
-                    await retire();
                     log.debug(e);
-                    throw `Unable to get searchState, retrying...\n${e.message || e}`;
                 }
 
                 if (shouldContinue) {
                     // Check mapResults
-                    const { mapResults } = searchState.searchResults;
-                    if (!mapResults) {
+                    const results = [
+                        ..._.get(
+                            searchState,
+                            'cat1.searchResults.mapResults',
+                            [],
+                        ),
+                        ..._.get(
+                            searchState,
+                            'cat1.searchResults.listResults',
+                            [],
+                        ),
+                    ];
+
+                    if (!results || !results.length) {
                         await retire();
                         throw `No map results at ${JSON.stringify(qs.mapBounds)}`;
                     }
@@ -645,7 +631,7 @@ Apify.main(async () => {
                     // Extract home data from mapResults
                     const thr = input.splitThreshold || 500;
 
-                    if (mapResults.length >= thr) {
+                    if (results.length >= thr) {
                         if (input.maxLevel && (request.userData.splitCount || 0) >= input.maxLevel) {
                             log.info('Over max level');
                         } else {
@@ -677,15 +663,15 @@ Apify.main(async () => {
                         }
                     }
 
-                    if (mapResults.length > 0) {
+                    if (results.length > 0) {
                         const extracted = () => {
                             log.info(`Extracted total ${zpids.size}`);
                         };
                         const interval = setInterval(extracted, 10000);
 
                         try {
-                            for (const { zpid, detailUrl } of mapResults) {
-                                await dump(zpid, mapResults);
+                            for (const { zpid, detailUrl } of results) {
+                                await dump(zpid, results);
 
                                 if (zpid) {
                                     await processZpid(zpid, detailUrl);

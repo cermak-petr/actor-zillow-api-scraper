@@ -2,19 +2,21 @@
     "name": "actor-zillow-api",
     "version": "0.0.1",
     "dependencies": {
-        "apify": "^0.22.4",
-        "lodash": "^4.17.20"
-    },
-    "peerDependencies": {
+        "apify": "^1.0.2",
+        "lodash": "^4.17.21",
         "puppeteer": "^5.5.0"
     },
     "devDependencies": {
         "@types/lodash": "^4.14.168",
         "@apify/eslint-config": "^0.1.3",
-        "eslint": "^7.18.0"
+        "eslint": "^7.21.0"
     },
     "scripts": {
         "start": "node src/main.js"
+    },
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/cermak-petr/actor-zillow-api-scraper"
     },
     "author": {
         "name": "Petr Čermák",

@@ -210,16 +210,19 @@ const queryRegionHomes = async ({ qs, type }) => {
         delete qs.filterState.ah;
     } catch (e) {}
 
-    const resp = await fetch(`https://www.zillow.com/search/GetSearchPageState.htm?searchQueryState=${encodeURIComponent(JSON.stringify(qs))}`, {
+    const wants = { cat1: ['listResults', 'mapResults'] };
+
+    const resp = await fetch(`https://www.zillow.com/search/GetSearchPageState.htm?searchQueryState=${encodeURIComponent(JSON.stringify(qs))}&wants=${JSON.stringify(wants)}&requestId=${Math.floor(Math.random() * 10) + 1}`, {
         body: null,
         headers: {
             dnt: '1',
             accept: '*/*',
             origin: document.location.origin,
-            referer: `${document.location.origin}/`,
+            referer: document.location.href,
         },
         method: 'GET',
         mode: 'cors',
+        credentials: 'include',
     });
 
     if (resp.status !== 200) {
@@ -290,6 +293,10 @@ const createGetSimpleResult = (attributes) => (data) => {
      * @type {Record<string, any>}
      */
     const result = {};
+
+    if (!data) {
+        return result;
+    }
 
     for (const key in attributes) {
         if (data[key]) { result[key] = data[key]; }
