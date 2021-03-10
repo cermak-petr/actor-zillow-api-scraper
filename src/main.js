@@ -333,16 +333,26 @@ Apify.main(async () => {
                 ? 'domcontentloaded'
                 : 'load';
         }],
+        postNavigationHooks: [async ({ crawler }) => {
+            if (isOverItems() && !isFinishing) {
+                isFinishing = true;
+                log.info('Reached maximum items, waiting for finish');
+                await Promise.all([
+                    crawler.autoscaledPool.pause(),
+                    crawler.autoscaledPool.resolve(),
+                ]);
+            }
+        }],
         maxConcurrency: 1,
-        handlePageFunction: async ({ page, request, crawler: { autoscaledPool }, browserController, session, response }) => {
-            if (!response) {
-                // response is null when goto is null
+        handlePageFunction: async ({ page, request, crawler: { autoscaledPool }, session, response }) => {
+            if (!response || isOverItems()) {
+                await page.close();
                 return;
             }
 
             const retire = async () => {
                 session.retire();
-                await browserController.close();
+                // await browserController.close();
             };
 
             // Retire browser if captcha is found
@@ -389,6 +399,10 @@ Apify.main(async () => {
                     session.markBad();
                     log.debug('processZpid', { error: e });
 
+                    if (isOverItems()) {
+                        return;
+                    }
+
                     // add as a separate detail for retrying
                     await requestQueue.addRequest({
                         url: new URL(detailUrl || `/homedetails/${zpid}_zpid/`, 'https://www.zillow.com').toString(),
@@ -411,7 +425,7 @@ Apify.main(async () => {
 
                 queryZpid = createQueryZpid(queryId, clientVersion, await page.cookies());
 
-                autoscaledPool.maxConcurrency = 1;
+                autoscaledPool.maxConcurrency = 10;
 
                 // now that we initialized, we can add the requests
                 for (const req of startUrls) {
@@ -532,7 +546,7 @@ Apify.main(async () => {
                         ]);
                     } catch (e) {
                         await retire();
-                        throw `Search didn't redirect, retrying...`;
+                        throw 'Search didn\'t redirect, retrying...';
                     }
 
                     if (!/(\/homes\/|_rb)/.test(page.url()) || page.url().includes('/_rb/')) {
@@ -542,7 +556,7 @@ Apify.main(async () => {
 
                     if (await page.$('.captcha-container')) {
                         await retire();
-                        throw `Captcha found when searching, retrying...`;
+                        throw 'Captcha found when searching, retrying...';
                     }
                 }
 
