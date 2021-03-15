@@ -10,7 +10,7 @@
 #  apify/actor-node-chrome-xvfb (Node.js + Chrome + Xvfb on Debian)
 # For more information, see https://docs.apify.com/actor/build#base-images
 # Note that you can use any other image from Docker Hub.
-FROM apify/actor-node-chrome-xvfb
+FROM apify/actor-node-chrome
 
 # Second, copy just package.json since it should be the only file
 # that affects "npm install" in the next step, to speed up the build
@@ -32,6 +32,8 @@ RUN npm --quiet set progress=false \
 # Since we do this after NPM install, quick build will be really fast
 # for most source file changes.
 COPY . ./
+
+ENV npm_config_loglevel=silent
 
 # Optionally, specify how to launch the source code of your actor.
 # By default, Apify's base Docker images define the CMD instruction

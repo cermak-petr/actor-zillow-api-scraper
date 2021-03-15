@@ -1,0 +1,10 @@
+{
+    "extends": "@apify",
+    "env": {
+        "node": true,
+        "browser": true
+    },
+    "rules": {
+        "max-len": 0
+    }
+}

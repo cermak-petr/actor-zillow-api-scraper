@@ -1,0 +1,9 @@
+{
+	"name": "actor-zillow-api-scraper",
+	"version": "0.0",
+	"buildTag": "latest",
+	"env": {
+		"npm_config_loglevel": "silent"
+	},
+	"template": "project_empty"
+}
