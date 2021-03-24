@@ -113,7 +113,7 @@ const interceptQueryId = async (page) => {
     await page.click('a.list-card-link');
 
     return Promise.race([
-        sleep(120000).then(() => reject(new Error('Failed to find queryId'))),
+        sleep(60000).then(() => reject(new Error('Failed to find queryId'))),
         promise,
     ]);
 };
@@ -346,9 +346,14 @@ const getUrlData = (url) => {
         };
     }
 
+    if (nUrl.pathname.match(/\/(fsbo|rent|sale|sold)\/?/)) {
+        throw new Error(`\n\nThe url provided "${nUrl.toString()}" isn't supported. Use a proper listing url containing searchQueryState\n\n`);
+    }
+
+    const label = nUrl.pathname.includes(',') ? LABELS.SEARCH : LABELS.QUERY;
     return {
-        label: LABELS.QUERY,
-        term: nUrl.pathname.split('/', 2).filter((s) => s)[0],
+        label,
+        term: label === LABELS.SEARCH ? nUrl.pathname.split('/', 2).filter((s) => s)[0] : undefined,
     };
 };
 

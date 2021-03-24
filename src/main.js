@@ -316,6 +316,7 @@ Apify.main(async () => {
                     'survata.com',
                     '/collector',
                     'ct.pinterest.com',
+                    'sync.ipredictive.com',
                 ].concat(request.userData.label === LABELS.DETAIL ? [
                     'maps.googleapis.com',
                     '.js',
@@ -333,7 +334,7 @@ Apify.main(async () => {
                 ? 'domcontentloaded'
                 : 'load';
         }],
-        postNavigationHooks: [async ({ crawler }) => {
+        postNavigationHooks: [async () => {
             if (isOverItems() && !isFinishing) {
                 isFinishing = true;
                 log.info('Reached maximum items, waiting for finish');
@@ -343,8 +344,11 @@ Apify.main(async () => {
                 ]);
             }
         }],
+        browserPoolOptions: {
+            maxOpenPagesPerBrowser: 1,
+        },
         maxConcurrency: 1,
-        handlePageFunction: async ({ page, request, crawler: { autoscaledPool }, session, response }) => {
+        handlePageFunction: async ({ page, request, browserController, crawler: { autoscaledPool }, session, response }) => {
             if (!response || isOverItems()) {
                 await page.close();
                 return;
@@ -352,7 +356,7 @@ Apify.main(async () => {
 
             const retire = async () => {
                 session.retire();
-                // await browserController.close();
+                await browserController.close();
             };
 
             // Retire browser if captcha is found
@@ -425,7 +429,7 @@ Apify.main(async () => {
 
                 queryZpid = createQueryZpid(queryId, clientVersion, await page.cookies());
 
-                autoscaledPool.maxConcurrency = 10;
+                autoscaledPool.maxConcurrency = 5;
 
                 // now that we initialized, we can add the requests
                 for (const req of startUrls) {
