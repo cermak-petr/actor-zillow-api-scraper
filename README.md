@@ -20,7 +20,8 @@ The way it works is by accesing Zillow's internal API and recursively splitting 
 | maxLevel | number | Maximum map splitting level | `20` |
 | minDate | string | Minimum date of the results allowed (timestamp or date string) | none |
 | simple | boolean | Toggle whether simplified results will be returned | `true` |
-| extendOutputFunction | string | Function that takes Zillow home data object as argument and returns data that will be merged with the default output. More information in [Extend output function](#extend-output-function) | `(data) => { return {}; }` |
+| extendOutputFunction | string | Function that takes Zillow home data object as argument and returns data that will be merged with the default output. More information in [Extend output function](#extend-output-function) | `async ({ item, data }) => { return item; }` |
+| extendScraperFunction | string | Allows to add additional functionality to the scraper. More information in [Extend scraper function](#extend-scraper-function) | `async ({ item, data, customData, Apify }) => { }` |
 | proxyConfiguration | object | Proxy settings of the run. If you have access to Apify proxy, leave the default settings. If not, you can set `{ "useApifyProxy": false" }` to disable proxy usage | `{ "useApifyProxy": true }`|
 
 Either the `search` or `startUrls` atrribute has to be set.
@@ -33,37 +34,34 @@ If the `simple` attribute is set, an example result may look like this:
 ```jsonc
 {
   "address": {
-    "streetAddress": "312 N Kendall Ave APT B",
-    "city": "Kalamazoo",
-    "state": "MI",
-    "zipcode": "49006",
-    "neighborhood": "Westwood",
+    "streetAddress": "20349 Valerio St",
+    "city": "Winnetka",
+    "state": "CA",
+    "zipcode": "91306",
+    "neighborhood": null,
     "community": null,
     "subdivision": null
   },
-  "bedrooms": 6,
-  "bathrooms": 3.5,
-  "price": 300,
-  "homeStatus": "SOLD",
-  "longitude": -85.626183,
-  "latitude": 42.29457,
-  "description": "Rent: $300.00/bed Student Housing. This is a 3-unit complex within close proximity to WMU consisting of 6 bedrooms and 3.5 baths throughout three levels in each unit. The main level features 1 of the 6 bedrooms, 1/2 bath, a roomy living room, kitchen with an eating area, and entry to your private deck. The upper level features 3 bedrooms, 2 full baths and a laundry area with a full size washer and dryer. The lower level features 2 bedrooms, 1 full bath and a bonus 2nd living area to use for socializing, gaming, studying, etc. All bedrooms are good-size and privately keyed. trash, lawn and snow plowing services included. Pet friendly with prior management approval and pet rent. Cats Allowed\nOven\nParking\nResident Pays Electricity\nResident Pays Gas\nResident Pays Water\nSmall Dogs Allowed\nSmoke Free\nTrash Pick Up Included\nUnfurnished\nWasher & Dryer",
-  "livingArea": 2236,
+  "bedrooms": 4,
+  "bathrooms": 3,
+  "price": 748900,
+  "yearBuilt": 1970,
+  "longitude": -118.57711791992188,
+  "homeStatus": "FOR_SALE",
+  "latitude": 34.20491409301758,
+  "description": "This wonderful 4 bedroom, 3 bathroom home nestled in Winnetka offers over 2,300 sq ft of space. The front door opens to vaulted ceilings and handsome wood flooring. Around the corner an eye-catching fireplace provides welcome warmth on those colder nights, flanked by dual windows which supply great natural sunlight. The family room is an entertainer's dream, complete with high ceilings, a skylight, and a swing-out bar that fits neatly into its enclave when not in use. In the kitchen you'll find stylish granite countertops, dark wood cabinetry, and a decorative tile backsplash. This spacious room serves as the perfect setting for cooking up delicious dishes. Plus, a handy garden window is ideal for flexing your green thumb. The primary bedroom includes an impressive walk-in closet, while its corresponding bathroom exudes elegance and a refined taste. In the backyard you'll find a covered patio and a flowerbed, complemented by high walls for privacy. Lastly, enjoy the large 2-car garage with convenient washer and dryer hookups.",
+  "livingArea": 2314,
   "currency": "USD",
-  "url": "https://www.zillow.com/homedetails/312-N-Kendall-Ave-APT-B-Kalamazoo-MI-49006/2096316908_zpid/",
+  "url": "https://www.zillow.com/homedetails/20349-Valerio-St-Winnetka-CA-91306/19912555_zpid/",
   "photos": [
-    "https://photos.zillowstatic.com/p_f/IS3f0lgq5a0cxn0000000000.jpg",
-    "https://photos.zillowstatic.com/p_f/ISzvuwdfl85g7p0000000000.jpg",
-    "https://photos.zillowstatic.com/p_f/ISrpskv8h0xi7p0000000000.jpg",
-    "https://photos.zillowstatic.com/p_f/ISjjq8d2dsol7p0000000000.jpg",
-    "https://photos.zillowstatic.com/p_f/ISbdowuv8kgo7p0000000000.jpg",
-    "https://photos.zillowstatic.com/p_f/IS3zfi07y70jap0000000000.jpg"
+    "https://photos.zillowstatic.com/fp/f911e9dcb1d4ab7761b410c5e16870fa-p_f.jpg",
+    // ...
   ]
 }
 ```
 
 If the `simple` attribute is not set, the result will contain many more attributes.
-You can find example of a full result [here](https://pastebin.com/P016j7ip).
+You can find example of a full result [here](https://pastebin.com/dRxuZmNQ).
 
 ### Map splitting
 
@@ -79,7 +77,7 @@ The average consumption is about **1 Compute unit per 2000 results** scraped.
 
 You can use this function to update the default output of this actor. This function gets Zillow internal home data object as an argument, so you can choose which other attributes you would like to add. The output from this function will get merged with the default output.
 
-The internal home object contains huge amounts of data - [example](https://pastebin.com/kiWayJvs)
+The internal home object contains huge amounts of data - [example](https://pastebin.com/AW9KKGJ4)
 Any of these attributes can be added to the result object.
 
 The return value of this function has to be an object!

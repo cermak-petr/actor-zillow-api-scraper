@@ -77,7 +77,7 @@
             "type": "string",
             "editor": "javascript",
             "description": "Extend the output item to contain more fields. The raw data is present in the 'data' variable.",
-            "prefill": "({ data, item, customData, Apify }) => {\n    return item;\n}",
+            "prefill": "async ({ data, item, customData, Apify }) => {\n    return item;\n}",
             "sectionCaption": "Extend scraper functionality",
             "sectionDescription": "You can change the output of the items for your dataset here, or add additional behavior on the scraper."
         },
