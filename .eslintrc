@@ -4,6 +4,9 @@
         "node": true,
         "browser": true
     },
+    "parserOptions": {
+        "ecmaVersion": 2020
+    },
     "rules": {
         "max-len": 0
     }

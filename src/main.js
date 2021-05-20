@@ -36,6 +36,10 @@ Apify.main(async () => {
         hint: ['RESIDENTIAL'],
     });
 
+    if (proxyConfig?.groups?.includes('RESIDENTIAL')) {
+        proxyConfig.countryCode = 'US';
+    }
+
     // Initialize minimum time
     const minTime = input.minDate
         ? (+input.minDate || new Date(input.minDate).getTime())
@@ -348,7 +352,7 @@ Apify.main(async () => {
             maxOpenPagesPerBrowser: 1,
         },
         maxConcurrency: 1,
-        handlePageFunction: async ({ page, request, browserController, crawler: { autoscaledPool }, session, response }) => {
+        handlePageFunction: async ({ page, request, browserController, crawler: { autoscaledPool }, session, response, proxyInfo }) => {
             if (!response || isOverItems()) {
                 await page.close();
                 return;

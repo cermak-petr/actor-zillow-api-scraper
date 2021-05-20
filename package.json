@@ -2,7 +2,7 @@
     "name": "actor-zillow-api",
     "version": "0.0.1",
     "dependencies": {
-        "apify": "^1.1.1",
+        "apify": "^1.2.1",
         "lodash": "^4.17.21",
         "puppeteer": "*"
     },
