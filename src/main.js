@@ -742,5 +742,10 @@ Apify.main(async () => {
         crawler,
     });
 
+    if (!queryZpid) {
+        // this usually means the proxy is busted, we need to fail
+        throw new Error('The selected proxy group seems to be blocked, try a different one or contact Apify on Intercom');
+    }
+
     log.info(`Done with ${zpids.size} listings!`);
 });
