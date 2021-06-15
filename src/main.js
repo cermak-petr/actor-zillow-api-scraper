@@ -1,276 +1,43 @@
 const Apify = require('apify');
 const _ = require('lodash');
-const { LABELS, TYPES, USER_AGENT } = require('./constants');
 const {
-    createGetSimpleResult,
+    initProxyConfig,
+    initCrawler
+} = require("./init");
+const {LABELS, USER_AGENT} = require('./constants');
+const {
     createQueryZpid,
-    proxyConfiguration,
     interceptQueryId,
     queryRegionHomes,
     splitQueryState,
     quickHash,
-    getUrlData,
-    extendFunction,
-    makeInputBackwardsCompatible,
 } = require('./functions');
 
-const { log, puppeteer, sleep } = Apify.utils;
+const {log, puppeteer, sleep} = Apify.utils;
 
 Apify.main(async () => {
     /**
      * @type {any}
      */
-    const input = await Apify.getInput();
-
     const isDebug = Apify.utils.log.getLevel() === Apify.utils.log.LEVELS.DEBUG;
 
-    // Check input
-    if (!(input.search && input.search.trim().length > 0) && !input.startUrls && !input.zpids) {
-        throw new Error('Either "search", "startUrls" or "zpids" attribute has to be set!');
-    }
+    const input = await Apify.getInput() || {
+        type: 'sold',
+        startUrls: ['https://www.zillow.com/homedetails/1801-Tyler-Ter-Prague-OK-74864/2082985658_zpid/'],
+    };
 
-    const proxyConfig = await proxyConfiguration({
-        proxyConfig: {
-            ...input.proxyConfiguration,
-        },
-        hint: ['RESIDENTIAL'],
-    });
+    const proxyConfig = await initProxyConfig(input)
 
-    if (proxyConfig?.groups?.includes('RESIDENTIAL')) {
-        proxyConfig.countryCode = 'US';
-    }
-
-    // Initialize minimum time
-    const minTime = input.minDate
-        ? (+input.minDate || new Date(input.minDate).getTime())
-        : null;
-
-    // Toggle showing only a subset of result attriutes
-    const getSimpleResult = createGetSimpleResult(
-        input.simple
-            ? {
-                address: true,
-                bedrooms: true,
-                bathrooms: true,
-                price: true,
-                yearBuilt: true,
-                longitude: true,
-                homeStatus: true,
-                latitude: true,
-                description: true,
-                livingArea: true,
-                currency: true,
-                hdpUrl: true,
-                hugePhotos: true,
-            }
-            : {
-                datePosted: true,
-                isZillowOwned: true,
-                priceHistory: true,
-                zpid: true,
-                homeStatus: true,
-                address: true,
-                bedrooms: true,
-                bathrooms: true,
-                price: true,
-                yearBuilt: true,
-                isPremierBuilder: true,
-                longitude: true,
-                latitude: true,
-                description: true,
-                primaryPublicVideo: true,
-                tourViewCount: true,
-                postingContact: true,
-                unassistedShowing: true,
-                livingArea: true,
-                currency: true,
-                homeType: true,
-                comingSoonOnMarketDate: true,
-                timeZone: true,
-                hdpUrl: true,
-                newConstructionType: true,
-                moveInReady: true,
-                moveInCompletionDate: true,
-                hugePhotos: true,
-                lastSoldPrice: true,
-                contingentListingType: true,
-                zestimate: true,
-                zestimateLowPercent: true,
-                zestimateHighPercent: true,
-                rentZestimate: true,
-                restimateLowPercent: true,
-                restimateHighPercent: true,
-                solarPotential: true,
-                brokerId: true,
-                parcelId: true,
-                homeFacts: true,
-                taxAssessedValue: true,
-                taxAssessedYear: true,
-                isPreforeclosureAuction: true,
-                listingProvider: true,
-                marketingName: true,
-                building: true,
-                priceChange: true,
-                datePriceChanged: true,
-                dateSold: true,
-                lotSize: true,
-                hoaFee: true,
-                mortgageRates: true,
-                propertyTaxRate: true,
-                whatILove: true,
-                isFeatured: true,
-                isListedByOwner: true,
-                isCommunityPillar: true,
-                pageViewCount: true,
-                favoriteCount: true,
-                openHouseSchedule: true,
-                brokerageName: true,
-                taxHistory: true,
-                abbreviatedAddress: true,
-                ownerAccount: true,
-                isRecentStatusChange: true,
-                isNonOwnerOccupied: true,
-                buildingId: true,
-                daysOnZillow: true,
-                rentalApplicationsAcceptedType: true,
-                buildingPermits: true,
-                highlights: true,
-                tourEligibility: true,
-            },
-    );
-
-    const zpids = new Set(await Apify.getValue('STATE'));
-
-    Apify.events.on('migrating', async () => {
-        await Apify.setValue('STATE', [...zpids.values()]);
-    });
-
-    // TODO: temp hack to get around empty output. remove this after merge to master
-    makeInputBackwardsCompatible(input);
-
-    const requestQueue = await Apify.openRequestQueue();
-
-    /**
-     * @type {Apify.RequestOptions[]}
-     */
-    const startUrls = [];
-
-    if (input.search && input.search.trim()) {
-        const term = input.search.trim();
-
-        startUrls.push({
-            url: 'https://www.zillow.com',
-            uniqueKey: `${term}`,
-            userData: {
-                label: LABELS.SEARCH,
-                term,
-            },
-        });
-    }
-
-    if (input.startUrls && input.startUrls.length) {
-        const requestList = await Apify.openRequestList('STARTURLS', input.startUrls);
-
-        let req;
-        while (req = await requestList.fetchNextRequest()) { // eslint-disable-line no-cond-assign
-            if (!req.url.includes('zillow.com')) {
-                throw new Error(`Invalid startUrl ${req.url}`);
-            }
-
-            startUrls.push({
-                url: req.url,
-                userData: getUrlData(req.url),
-            });
-        }
-    }
-
-    if (input.zpids && input.zpids.length) {
-        startUrls.push({
-            url: 'https://www.zillow.com/',
-            uniqueKey: 'ZPIDS',
-            userData: {
-                label: LABELS.ZPIDS,
-            },
-        });
-    }
-
-    /**
-     * @type {ReturnType<typeof createQueryZpid>}
-     */
-    let queryZpid = null;
-
-    await requestQueue.addRequest({
-        url: 'https://www.zillow.com/homes/',
-        uniqueKey: `${Math.random()}`,
-        userData: {
-            label: LABELS.INITIAL,
-        },
-    }, { forefront: true });
-
-    const isOverItems = (extra = 0) => (typeof input.maxItems === 'number' && input.maxItems > 0
-        ? (zpids.size + extra) >= input.maxItems
-        : false);
-
-    const extendOutputFunction = await extendFunction({
-        map: async (data) => {
-            return getSimpleResult(data);
-        },
-        filter: async ({ data }) => {
-            if (isOverItems()) {
-                return false;
-            }
-
-            if (!_.get(data, 'zpid')) {
-                return false;
-            }
-
-            return (minTime ? data.datePosted <= minTime : true)
-                && !zpids.has(`${data.zpid}`);
-        },
-        output: async (output, { data }) => {
-            zpids.add(`${data.zpid}`);
-            await Apify.pushData(output);
-        },
-        input,
-        key: 'extendOutputFunction',
-        helpers: {
-            getUrlData,
-            getSimpleResult,
-            _,
-            zpids,
-            minTime,
-            TYPES,
-            LABELS,
-        },
-    });
-
-    const extendScraperFunction = await extendFunction({
-        output: async () => {}, // no-op
-        input,
-        key: 'extendScraperFunction',
-        helpers: {
-            proxyConfig,
-            startUrls,
-            getUrlData,
-            requestQueue,
-            get queryZpid() {
-                // if we use the variable here won't change to the actual function
-                // and will always get null
-                return queryZpid;
-            },
-            getSimpleResult,
-            zpids,
-            _,
-            extendOutputFunction,
-            minTime,
-        },
-    });
-
-    const dump = Apify.utils.log.LEVELS.DEBUG === Apify.utils.log.getLevel() ? async (zpid, data) => {
-        if (typeof zpid !== 'number') {
-            await Apify.setValue(`DUMP-${Math.random()}`, data);
-        }
-    } : () => {};
+    let {
+        startUrls,
+        requestQueue,
+        extendOutputFunction,
+        extendScraperFunction,
+        dump,
+        isOverItems,
+        queryZpid,
+        zpids,
+    } = await initCrawler(input, isDebug, proxyConfig);
 
     await extendScraperFunction(undefined, {
         label: 'SETUP',
@@ -300,7 +67,7 @@ Apify.main(async () => {
             stealth: input.stealth || false,
             userAgent: USER_AGENT,
         },
-        preNavigationHooks: [async ({ request, page }, gotoOptions) => {
+        preNavigationHooks: [async ({request, page}, gotoOptions) => {
             await puppeteer.blockRequests(page, {
                 extraUrlPatterns: [
                     '.css.map',
@@ -352,7 +119,17 @@ Apify.main(async () => {
             maxOpenPagesPerBrowser: 1,
         },
         maxConcurrency: 1,
-        handlePageFunction: async ({ page, request, browserController, crawler: { autoscaledPool }, session, response, proxyInfo }) => {
+        handlePageFunction: async (
+            {
+                page,
+                request,
+                browserController,
+                crawler: {autoscaledPool},
+                session,
+                response,
+                proxyInfo
+            }
+        ) => {
             if (!response || isOverItems()) {
                 await page.close();
                 return;
@@ -405,7 +182,7 @@ Apify.main(async () => {
                 } catch (e) {
                     anyErrors = true;
                     session.markBad();
-                    log.debug('processZpid', { error: e });
+                    log.debug('processZpid', {error: e});
 
                     if (isOverItems()) {
                         return;
@@ -418,18 +195,18 @@ Apify.main(async () => {
                             label: LABELS.DETAIL,
                             zpid: +zpid,
                         },
-                    }, { forefront: true });
+                    }, {forefront: true});
                 }
             };
 
-            const { label } = request.userData;
+            const {label} = request.userData;
 
             if (label === LABELS.INITIAL || !queryZpid) {
                 log.info('Trying to get queryId...');
 
-                const { queryId, clientVersion } = await interceptQueryId(page);
+                const {queryId, clientVersion} = await interceptQueryId(page);
 
-                log.debug('Intercepted queryId', { queryId, clientVersion });
+                log.debug('Intercepted queryId', {queryId, clientVersion});
 
                 queryZpid = createQueryZpid(queryId, clientVersion, await page.cookies());
 
@@ -467,7 +244,7 @@ Apify.main(async () => {
                                 label: LABELS.DETAIL,
                                 zpid: +zpid,
                             },
-                        }, { forefront: true });
+                        }, {forefront: true});
 
                         if (!rq.wasAlreadyPresent) {
                             log.info(`Re-enqueueing ${url}`);
@@ -510,7 +287,7 @@ Apify.main(async () => {
                     } catch (e) {
                         if (e.message.includes('Cannot read property')) {
                             // this is a faulty extend output function
-                            log.error(`Your Extend Output Function errored:\n\n    ${e}\n\n`, { url: page.url() });
+                            log.error(`Your Extend Output Function errored:\n\n    ${e}\n\n`, {url: page.url()});
                         }
                         log.debug(e);
                     }
@@ -543,13 +320,13 @@ Apify.main(async () => {
                     ]);
 
                     await page.focus(text);
-                    await page.type(text, request.userData.term, { delay: 100 });
+                    await page.type(text, request.userData.term, {delay: 100});
 
                     await sleep(3000);
 
                     try {
                         await Promise.all([
-                            page.waitForNavigation({ timeout: 15000 }),
+                            page.waitForNavigation({timeout: 15000}),
                             page.tap(btn),
                         ]);
                     } catch (e) {
@@ -588,7 +365,7 @@ Apify.main(async () => {
 
                     const results = _.get(pageQs, 'cat1.searchResults.listResults', []);
 
-                    for (const { zpid, detailUrl } of results) {
+                    for (const {zpid, detailUrl} of results) {
                         await dump(zpid, results);
 
                         if (zpid) {
@@ -607,7 +384,7 @@ Apify.main(async () => {
                             throw 'Query state is empty';
                         }
 
-                        log.debug('queryState', { qs });
+                        log.debug('queryState', {qs});
 
                         const result = await page.evaluate(
                             queryRegionHomes,
@@ -670,7 +447,7 @@ Apify.main(async () => {
                                 }
 
                                 const uniqueKey = quickHash(`${request.url}${splitCount}${JSON.stringify(queryState)}`);
-                                log.debug('queryState', { queryState, uniqueKey });
+                                log.debug('queryState', {queryState, uniqueKey});
 
                                 await requestQueue.addRequest({
                                     url: request.url,
@@ -692,7 +469,7 @@ Apify.main(async () => {
                         const interval = setInterval(extracted, 10000);
 
                         try {
-                            for (const { zpid, detailUrl } of results) {
+                            for (const {zpid, detailUrl} of results) {
                                 await dump(zpid, results);
 
                                 if (zpid) {
@@ -728,7 +505,7 @@ Apify.main(async () => {
                 throw 'Retiring session and browser...';
             }
         },
-        handleFailedRequestFunction: async ({ request }) => {
+        handleFailedRequestFunction: async ({request}) => {
             // This function is called when the crawling of a request failed too many times
             log.error(`\n\nRequest ${request.url} failed too many times.\n\n`);
         },

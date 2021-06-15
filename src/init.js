@@ -1,0 +1,190 @@
+const Apify = require('apify');
+const {
+    proxyConfiguration,
+    initResultShape,
+    makeInputBackwardsCompatible,
+    getUrlData,
+    extendFunction,
+} = require("./functions");
+const {LABELS, TYPES} = require('./constants');
+const uuid = require('uuid').v4;
+const _ = require('lodash');
+
+async function initProxyConfig(input) {
+    const proxyConfig = await proxyConfiguration({
+        proxyConfig: {
+            ...input.proxyConfiguration,
+        },
+        hint: ['RESIDENTIAL'],
+    });
+
+    if (proxyConfig?.groups?.includes('RESIDENTIAL')) {
+        proxyConfig.countryCode = 'US';
+    }
+
+    return proxyConfig;
+}
+
+async function initCrawler(input, isDebug, proxyConfig) {
+    // Check input
+    if (!(input.search && input.search.trim().length > 0) && !input.startUrls && !input.zpids) {
+        throw new Error('Either "search", "startUrls" or "zpids" attribute has to be set!');
+    }
+
+    // Initialize minimum time
+    const minTime = input.minDate ? (+input.minDate || new Date(input.minDate).getTime()) : null;
+
+    // Toggle showing only a subset of result attributes
+    const getSimpleResult = initResultShape(input.simple)
+
+    const zpids = new Set(await Apify.getValue('STATE'));
+
+    Apify.events.on('migrating', async () => {
+        await Apify.setValue('STATE', [...zpids.values()]);
+    });
+
+    // TODO: temp hack to get around empty output. remove this after merge to master
+    makeInputBackwardsCompatible(input);
+
+    const requestQueue = await Apify.openRequestQueue();
+
+    /**
+     * @type {Apify.RequestOptions[]}
+     */
+    const startUrls = [];
+
+    if (input.search && input.search.trim()) {
+        const term = input.search.trim();
+
+        startUrls.push({
+            url: 'https://www.zillow.com',
+            uniqueKey: `${term}`,
+            userData: {
+                label: LABELS.SEARCH,
+                term,
+            },
+        });
+    }
+
+    if (input.startUrls && input.startUrls.length) {
+        const requestList = await Apify.openRequestList('STARTURLS', input.startUrls);
+
+        let req;
+        while (req = await requestList.fetchNextRequest()) { // eslint-disable-line no-cond-assign
+            if (!req.url.includes('zillow.com')) {
+                throw new Error(`Invalid startUrl ${req.url}`);
+            }
+            startUrls.push({
+                url: req.url,
+                userData: getUrlData(req.url),
+            });
+        }
+    }
+
+    if (input.zpids && input.zpids.length) {
+        startUrls.push({
+            url: 'https://www.zillow.com/',
+            uniqueKey: 'ZPIDS',
+            userData: {
+                label: LABELS.ZPIDS,
+            },
+        });
+    }
+
+    /**
+     * @type {ReturnType<typeof createQueryZpid>}
+     */
+    let queryZpid = null;
+
+    await requestQueue.addRequest({
+        url: 'https://www.zillow.com/homes/',
+        uniqueKey: `${uuid()}`,
+        userData: {
+            label: LABELS.INITIAL,
+        },
+    }, {forefront: true});
+
+    const isOverItems = (extra = 0) => (typeof input.maxItems === 'number' && input.maxItems > 0
+        ? (zpids.size + extra) >= input.maxItems
+        : false);
+
+    const extendOutputFunction = await extendFunction({
+        map: async (data) => {
+            return getSimpleResult(data);
+        },
+        filter: async ({data}) => {
+            if (isOverItems()) {
+                return false;
+            }
+
+            if (!_.get(data, 'zpid')) {
+                return false;
+            }
+
+            return (minTime ? data.datePosted <= minTime : true)
+                && !zpids.has(`${data.zpid}`);
+        },
+        output: async (output, {data}) => {
+            zpids.add(`${data.zpid}`);
+            await Apify.pushData(output);
+        },
+        input,
+        key: 'extendOutputFunction',
+        helpers: {
+            getUrlData,
+            getSimpleResult,
+            _,
+            zpids,
+            minTime,
+            TYPES,
+            LABELS,
+        },
+    });
+
+    const extendScraperFunction = await extendFunction({
+        output: async () => {
+        }, // no-op
+        input,
+        key: 'extendScraperFunction',
+        helpers: {
+            proxyConfig,
+            startUrls,
+            getUrlData,
+            requestQueue,
+            get queryZpid() {
+                // if we use the variable here won't change to the actual function
+                // and will always get null
+                return queryZpid;
+            },
+            getSimpleResult,
+            zpids,
+            _,
+            extendOutputFunction,
+            minTime,
+        },
+    });
+
+    const dump = isDebug ? async (zpid, data) => {
+        if (typeof zpid !== 'number') {
+            await Apify.setValue(`DUMP-${uuid}`, data);
+        }
+    } : () => {
+    };
+
+    return {
+        startUrls: startUrls,
+        requestQueue: requestQueue,
+        extendOutputFunction: extendOutputFunction,
+        extendScraperFunction: extendScraperFunction,
+        dump: dump,
+        isOverItems: isOverItems,
+        queryZpid: queryZpid,
+        zpids: zpids,
+    }
+}
+
+module.exports = {
+    initResultShape,
+    initProxyConfig,
+    initCrawler: initCrawler,
+};
