@@ -637,6 +637,11 @@ async function processZpid(
     return errors;
 }
 
+async function retire(session, browserController)  {
+    session.retire();
+    await browserController.close();
+}
+
 module.exports = {
     createGetSimpleResult,
     createQueryZpid,
@@ -652,4 +657,5 @@ module.exports = {
     initPersistence,
     isEnoughItemsCollected,
     processZpid,
+    retire,
 };

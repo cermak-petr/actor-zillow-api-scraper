@@ -1,6 +1,7 @@
 const Apify = require('apify');
 const _ = require('lodash');
 const {handleInitialCrawl} = require("./crawler/init");
+const {RetireError, handleDetailCrawl} = require("./crawler/details");
 const {
     initProxyConfig,
     initCrawler
@@ -12,6 +13,7 @@ const {
     quickHash,
     isEnoughItemsCollected,
     processZpid,
+    retire,
 } = require('./functions');
 
 const {log, puppeteer, sleep} = Apify.utils;
@@ -152,14 +154,9 @@ Apify.main(async () => {
                 return;
             }
 
-            const retire = async () => {
-                session.retire();
-                await browserController.close();
-            };
-
             // Retire browser if captcha is found
             if (await page.$('.captcha-container')) {
-                await retire();
+                await retire(session, browserController);
                 throw 'Captcha found, retrying...';
             }
 
@@ -173,85 +170,22 @@ Apify.main(async () => {
             const {label} = request.userData;
 
             if (label === LABELS.INITIAL || !queryZpid) {
-                // Get queryZpid to be able to use zillow graphql
+                // LABELS.INITIAL: Get queryZpid to be able to use zillow graphql
                 queryZpid = await handleInitialCrawl(page, requestQueue, startUrls, autoscaledPool);
             } else if (label === LABELS.DETAIL) {
+                // LABELS.DETAIL: Crawl
                 if (isEnoughItemsCollected(maxItems, zpids)) {
                     return;
                 }
-
-                log.info(`Scraping ${page.url()}`);
-
-                if (request.url.startsWith('/b/') || !+request.userData.zpid) {
-                    const nextData = await page.$eval('[id="__NEXT_DATA__"]', (s) => JSON.parse(s.innerHTML));
-
-                    if (!nextData) {
-                        throw 'Missing data';
+                //todo generic
+                try {
+                    await handleDetailCrawl(page, request, requestQueue, extendOutputFunction);
+                } catch (e) {
+                    if (e instanceof RetireError) {
+                        await retire(session, browserController)
+                    } else {
+                        throw e;
                     }
-
-                    // legacy layout, need re-enqueue
-                    const zpid = _.get(nextData, 'props.initialData.building.zpid');
-
-                    if (zpid) {
-                        const url = `https://www.zillow.com/homedetails/${zpid}_zpid/`;
-
-                        const rq = await requestQueue.addRequest({
-                            url,
-                            userData: {
-                                label: LABELS.DETAIL,
-                                zpid: +zpid,
-                            },
-                        }, {forefront: true});
-
-                        if (!rq.wasAlreadyPresent) {
-                            log.info(`Re-enqueueing ${url}`);
-                        }
-
-                        return;
-                    }
-
-                    throw 'ZPID not found in page';
-                }
-
-                const scripts = await page.$x('//script[contains(., "RenderQuery") and contains(., "apiCache")]');
-
-                // await Apify.setValue(`${request.userData.zpid}--${Math.random()}`, await page.content(), { contentType: 'text/html' });
-
-                if (!scripts.length) {
-                    await retire();
-                    throw 'Failed to load preloaded data scripts';
-                }
-
-                log.info(`Extracting data from ${request.url}`);
-                let noScriptsFound = true;
-
-                for (const script of scripts) {
-                    try {
-                        const loaded = JSON.parse(JSON.parse(await script.evaluate((s) => s.innerHTML)).apiCache);
-
-                        for (const key in loaded) { // eslint-disable-line
-                            if (key.includes('RenderQuery') && loaded[key].property) {
-                                await extendOutputFunction(loaded[key].property, {
-                                    request,
-                                    page,
-                                    zpid: request.userData.zpid,
-                                });
-
-                                noScriptsFound = false;
-                                break;
-                            }
-                        }
-                    } catch (e) {
-                        if (e.message.includes('Cannot read property')) {
-                            // this is a faulty extend output function
-                            log.error(`Your Extend Output Function errored:\n\n    ${e}\n\n`, {url: page.url()});
-                        }
-                        log.debug(e);
-                    }
-                }
-
-                if (noScriptsFound) {
-                    throw 'Failed to load preloaded data from page';
                 }
             } else if (label === LABELS.ZPIDS) {
                 // Extract all homes by input ZPIDs
