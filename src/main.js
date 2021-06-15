@@ -1,7 +1,9 @@
 const Apify = require('apify');
 const _ = require('lodash');
+const {handleQuery} = require("./crawler/query");
+const {handleSearch} = require("./crawler/query");
 const {handleInitialCrawl} = require("./crawler/init");
-const {RetireError, handleDetailCrawl} = require("./crawler/details");
+const {RetireError, handleDetailCrawl} = require("./crawler/detail");
 const {
     initProxyConfig,
     initCrawler
@@ -9,8 +11,6 @@ const {
 const {LABELS, USER_AGENT} = require('./constants');
 const {
     queryRegionHomes,
-    splitQueryState,
-    quickHash,
     isEnoughItemsCollected,
     processZpid,
     retire,
@@ -148,258 +148,71 @@ Apify.main(async () => {
                 proxyInfo
             }
         ) => {
-            // Either there is no response or we have already scraped the desired product count
-            if (!response || isEnoughItemsCollected(maxItems, zpids)) {
-                await page.close();
-                return;
-            }
-
-            // Retire browser if captcha is found
-            if (await page.$('.captcha-container')) {
-                await retire(session, browserController);
-                throw 'Captcha found, retrying...';
-            }
-
-            let anyErrors = false;
-
-            /**
-             * Extract home data by ZPID
-             * @param {string} zpid
-             * @param {string} detailUrl
-             */
-            const {label} = request.userData;
-
-            if (label === LABELS.INITIAL || !queryZpid) {
-                // LABELS.INITIAL: Get queryZpid to be able to use zillow graphql
-                queryZpid = await handleInitialCrawl(page, requestQueue, startUrls, autoscaledPool);
-            } else if (label === LABELS.DETAIL) {
-                // LABELS.DETAIL: Crawl
-                if (isEnoughItemsCollected(maxItems, zpids)) {
+            try {
+                // Either there is no response or we have already scraped the desired product count
+                if (!response || isEnoughItemsCollected(maxItems, zpids)) {
+                    await page.close();
                     return;
                 }
-                //todo generic
-                try {
-                    await handleDetailCrawl(page, request, requestQueue, extendOutputFunction);
-                } catch (e) {
-                    if (e instanceof RetireError) {
-                        await retire(session, browserController)
-                    } else {
-                        throw e;
-                    }
+
+                // Retire browser if captcha is found
+                if (await page.$('.captcha-container')) {
+                    throw new RetireError('Captcha found, retrying...');
                 }
-            } else if (label === LABELS.ZPIDS) {
-                // Extract all homes by input ZPIDs
-                log.info(`Scraping ${input.zpids.length} zpids`);
 
-                for (const zpid of input.zpids) {
-                    anyErrors = await processZpid(
-                        request, page, extendOutputFunction, queryZpid, requestQueue, zpid, ''
-                    );
-
+                let anyErrors = false;
+                const {label} = request.userData;
+                if (label === LABELS.INITIAL || !queryZpid) {
+                    // LABELS.INITIAL: Get queryZpid to be able to use zillow graphql
+                    queryZpid = await handleInitialCrawl(page, requestQueue, startUrls, autoscaledPool);
+                } else if (label === LABELS.DETAIL) {
+                    // LABELS.DETAIL: Crawl product (home) detail page
                     if (isEnoughItemsCollected(maxItems, zpids)) {
-                        break;
+                        return;
                     }
-                }
-            } else if (label === LABELS.QUERY || label === LABELS.SEARCH) {
-                if (label === LABELS.SEARCH) {
-                    log.info(`Searching for "${request.userData.term}"`);
+                    await handleDetailCrawl(page, request, requestQueue, extendOutputFunction);
+                } else if (label === LABELS.ZPIDS) {
+                    // LABELS.ZPIDS: Extract all home detail pages by input ZPIDs
+                    log.info(`Scraping ${input.zpids.length} zpids`);
 
-                    const text = '#search-box-input';
-                    const btn = 'button#search-icon';
-
-                    await Promise.all([
-                        page.waitForSelector(text),
-                        page.waitForSelector(btn),
-                    ]);
-
-                    await page.focus(text);
-                    await page.type(text, request.userData.term, {delay: 100});
-
-                    await sleep(3000);
-
-                    try {
-                        await Promise.all([
-                            page.waitForNavigation({timeout: 15000}),
-                            page.tap(btn),
-                        ]);
-                    } catch (e) {
-                        await retire();
-                        throw 'Search didn\'t redirect, retrying...';
-                    }
-
-                    if (!/(\/homes\/|_rb)/.test(page.url()) || page.url().includes('/_rb/')) {
-                        await retire();
-                        throw `Unexpected page address ${page.url()}, use a better keyword for searching or proper state or city name. Will retry...`;
-                    }
-
-                    if (await page.$('.captcha-container')) {
-                        await retire();
-                        throw 'Captcha found when searching, retrying...';
-                    }
-                }
-
-                // Get initial searchState
-                let qs = request.userData.queryState;
-                let searchState;
-                let shouldContinue = true;
-
-                try {
-                    const pageQs = await page.evaluate(() => {
-                        try {
-                            return JSON.parse(
-                                document.querySelector(
-                                    'script[data-zrr-shared-data-key="mobileSearchPageStore"]',
-                                ).innerHTML.slice(4, -3),
-                            );
-                        } catch (e) {
-                            return {};
-                        }
-                    });
-
-                    const results = _.get(pageQs, 'cat1.searchResults.listResults', []);
-
-                    for (const {zpid, detailUrl} of results) {
-                        await dump(zpid, results);
-
-                        if (zpid) {
-                            if (isEnoughItemsCollected(maxItems, zpids)) {
-                                shouldContinue = false;
-                                break;
-                            }
-                            anyErrors = await processZpid(
-                                request, page, extendOutputFunction, queryZpid, requestQueue, zpid, detailUrl
-                            );
-                        }
-                    }
-
-                    if (shouldContinue) {
-                        qs = qs || pageQs.queryState;
-
-                        if (!qs) {
-                            throw 'Query state is empty';
-                        }
-
-                        log.debug('queryState', {qs});
-
-                        const result = await page.evaluate(
-                            queryRegionHomes,
-                            {
-                                qs,
-                                // use a special type so the query state that comes from the url
-                                // doesn't get erased
-                                type: request.userData.queryState ? 'qs' : input.type,
-                            },
+                    for (const zpid of input.zpids) {
+                        anyErrors = await processZpid(
+                            request, page, extendOutputFunction, queryZpid, requestQueue, zpid, ''
                         );
 
-                        log.debug('query', result.qs);
-
-                        searchState = JSON.parse(result.body);
-                        qs = result.qs;
-                    }
-                } catch (e) {
-                    log.debug(e);
-                }
-
-                if (shouldContinue) {
-                    // Check mapResults
-                    const results = [
-                        ..._.get(
-                            searchState,
-                            'cat1.searchResults.mapResults',
-                            [],
-                        ),
-                        ..._.get(
-                            searchState,
-                            'cat1.searchResults.listResults',
-                            [],
-                        ),
-                    ];
-
-                    if (!results || !results.length) {
-                        await retire();
-                        throw `No map results at ${JSON.stringify(qs.mapBounds)}`;
-                    }
-
-                    log.info(`Searching homes at ${JSON.stringify(qs.mapBounds)}`);
-
-                    // Extract home data from mapResults
-                    const thr = input.splitThreshold || 500;
-
-                    if (results.length >= thr) {
-                        if (input.maxLevel && (request.userData.splitCount || 0) >= input.maxLevel) {
-                            log.info('Over max level');
-                        } else {
-                            // Split map and enqueue sub-rectangles
-                            const splitCount = (request.userData.splitCount || 0) + 1;
-                            const split = [
-                                ...splitQueryState(qs),
-                                ...splitQueryState(request.userData.queryState),
-                            ];
-
-                            for (const queryState of split) {
-                                if (isEnoughItemsCollected(maxItems, zpids)) {
-                                    break;
-                                }
-
-                                const uniqueKey = quickHash(`${request.url}${splitCount}${JSON.stringify(queryState)}`);
-                                log.debug('queryState', {queryState, uniqueKey});
-
-                                await requestQueue.addRequest({
-                                    url: request.url,
-                                    userData: {
-                                        queryState,
-                                        label: LABELS.QUERY,
-                                        splitCount,
-                                    },
-                                    uniqueKey,
-                                });
-                            }
+                        if (isEnoughItemsCollected(maxItems, zpids)) {
+                            break;
                         }
                     }
-
-                    if (results.length > 0) {
-                        const extracted = () => {
-                            log.info(`Extracted total ${zpids.size}`);
-                        };
-                        const interval = setInterval(extracted, 10000);
-
-                        try {
-                            for (const {zpid, detailUrl} of results) {
-                                await dump(zpid, results);
-
-                                if (zpid) {
-                                    anyErrors = await processZpid(
-                                        request, page, extendOutputFunction, queryZpid, requestQueue, zpid, detailUrl
-                                    );
-
-                                    if (isEnoughItemsCollected(maxItems, zpids)) {
-                                        break; // optimize runtime
-                                    }
-                                }
-                            }
-                        } finally {
-                            if (!anyErrors) {
-                                extracted();
-                            }
-                            clearInterval(interval);
-                        }
+                } else if (label === LABELS.QUERY || label === LABELS.SEARCH) {
+                    if (label === LABELS.SEARCH) {
+                        anyErrors = await handleSearch(page, request);
                     }
+                    await handleQuery(page, request, dump, requestQueue, extendOutputFunction, input, zpids, queryZpid);
                 }
-            }
 
-            await extendScraperFunction(undefined, {
-                page,
-                request,
-                retire,
-                processZpid,
-                queryZpid,
-                queryRegionHomes,
-                label: 'HANDLE',
-            });
+                await extendScraperFunction(undefined, {
+                    page,
+                    request,
+                    retire,
+                    processZpid,
+                    queryZpid,
+                    queryRegionHomes,
+                    label: 'HANDLE',
+                });
 
-            if (anyErrors) {
-                await retire();
-                throw 'Retiring session and browser...';
+                if (anyErrors) {
+                    throw new RetireError('Retiring session and browser...')
+                }
+            } catch (e) {
+                if (e instanceof RetireError) {
+                    // We need to retire the session due to an successful scrape defense such as captcha
+                    log.info(`Retiring browser session due to: "${e.message}"`);
+                    await retire(session, browserController);
+                } else {
+                    // Another error occurs, propagate it to the SDK
+                    throw e;
+                }
             }
         },
         handleFailedRequestFunction: async ({request}) => {

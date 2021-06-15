@@ -13,7 +13,12 @@ const {
 const {LABELS, TYPES} = require('../constants');
 const uuid = require('uuid').v4;
 const _ = require('lodash');
-const { log } = Apify.utils;
+const {log} = Apify.utils;
+
+class RetireError extends Error {
+
+}
+
 
 async function initProxyConfig(input) {
     const proxyConfig = await proxyConfiguration({
@@ -208,4 +213,5 @@ module.exports = {
     initProxyConfig,
     initCrawler,
     handleInitialCrawl,
+    RetireError,
 };

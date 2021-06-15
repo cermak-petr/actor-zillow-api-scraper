@@ -1,11 +1,8 @@
 const Apify = require('apify');
 const {LABELS} = require("../constants");
-const { retire } = require("../functions");
 const {log} = Apify.utils;
+const {RetireError} = require('./init');
 
-class RetireError extends Error {
-
-}
 
 async function handleDetailCrawl(page, request, requestQueue, extendOutputFunction) {
     log.info(`Scraping ${page.url()}`);
