@@ -6,10 +6,14 @@ const {
     getUrlData,
     extendFunction,
     initPersistence,
-} = require("./functions");
-const {LABELS, TYPES} = require('./constants');
+    isEnoughItemsCollected,
+    interceptQueryId,
+    createQueryZpid
+} = require("../functions");
+const {LABELS, TYPES} = require('../constants');
 const uuid = require('uuid').v4;
 const _ = require('lodash');
+const { log } = Apify.utils;
 
 async function initProxyConfig(input) {
     const proxyConfig = await proxyConfiguration({
@@ -34,6 +38,8 @@ async function initCrawler(input, isDebug, proxyConfig) {
 
     // Initialize minimum time
     const minTime = input.minDate ? (+input.minDate || new Date(input.minDate).getTime()) : null;
+
+    const maxItems = input.maxItems;
 
     // Toggle showing only a subset of result attributes
     const getSimpleResult = initResultShape(input.simple)
@@ -101,16 +107,12 @@ async function initCrawler(input, isDebug, proxyConfig) {
         },
     }, {forefront: true});
 
-    const isEnoughItemsCollected = (extra = 0) => (typeof input.maxItems === 'number' && input.maxItems > 0
-        ? (zpids.size + extra) >= input.maxItems
-        : false);
-
     const extendOutputFunction = await extendFunction({
         map: async (data) => {
             return getSimpleResult(data);
         },
         filter: async ({data}) => {
-            if (isEnoughItemsCollected()) {
+            if (isEnoughItemsCollected(input.maxItems, zpids)) {
                 return false;
             }
 
@@ -174,14 +176,36 @@ async function initCrawler(input, isDebug, proxyConfig) {
         extendOutputFunction: extendOutputFunction,
         extendScraperFunction: extendScraperFunction,
         dump: dump,
-        isEnoughItemsCollected: isEnoughItemsCollected,
         queryZpid: queryZpid,
         zpids: zpids,
+        maxItems: maxItems,
     }
+}
+
+async function handleInitialCrawl(page, requestQueue, startUrls, autoscaledPool) {
+    log.info('Trying to get queryId...');
+
+    const {queryId, clientVersion} = await interceptQueryId(page);
+
+    log.debug('Intercepted queryId', {queryId, clientVersion});
+
+    const queryZpid = createQueryZpid(queryId, clientVersion, await page.cookies());
+
+    autoscaledPool.maxConcurrency = 5;
+
+    // now that we initialized, we can add the requests
+    for (const req of startUrls) {
+        await requestQueue.addRequest(req);
+    }
+
+    log.info('Got queryId, continuing...');
+
+    return queryZpid;
 }
 
 module.exports = {
     initResultShape,
     initProxyConfig,
-    initCrawler: initCrawler,
+    initCrawler,
+    handleInitialCrawl,
 };

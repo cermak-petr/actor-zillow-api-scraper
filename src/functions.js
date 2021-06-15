@@ -4,7 +4,8 @@ const { createHash } = require('crypto');
 const vm = require('vm');
 const { TYPES, LABELS } = require('./constants');
 
-const { sleep } = Apify.utils;
+const { sleep, log } = Apify.utils;
+
 
 /**
  * @param {Record<string,any>} input
@@ -572,6 +573,69 @@ async function initPersistence() {
     return zpids;
 }
 
+// TODO
+// This function evaluates if we scraped enough items (provided by user in the input `input.maxItems`) and
+// should quit scraping. If `input.maxItems == 0`, we are attempting to scrape all available items.
+function isEnoughItemsCollected(maxItems, zpids, extra = 0) {
+    if (typeof maxItems === 'number' && maxItems > 0) {
+        return (zpids.size + extra) >= maxItems;
+    } else {
+        return false;
+    }
+}
+
+
+async function processZpid(
+    request, page, extendOutputFunction, queryZpid, requestQueue, zpid, detailUrl, session, zpids
+) {
+    let errors = false;
+
+    if (isEnoughItemsCollected()) {
+        return;
+    }
+
+    try {
+        if (+zpid != zpid) {
+            throw 'Invalid non-numeric zpid';
+        }
+
+        if (zpids.has(`${zpid}`)) {
+            return;
+        }
+
+        if (!session.isUsable()) {
+            throw 'Not trying to retrieve data';
+        }
+
+        await extendOutputFunction(
+            JSON.parse(await queryZpid(page, zpid)).data.property,
+            {
+                request,
+                page,
+                zpid,
+            },
+        );
+    } catch (e) {
+        errors = true;
+        session.markBad();
+        log.debug('processZpid', {error: e});
+
+        if (isEnoughItemsCollected()) {
+            return;
+        }
+
+        // add as a separate detail for retrying
+        await requestQueue.addRequest({
+            url: new URL(detailUrl || `/homedetails/${zpid}_zpid/`, 'https://www.zillow.com').toString(),
+            userData: {
+                label: LABELS.DETAIL,
+                zpid: +zpid,
+            },
+        }, {forefront: true});
+    }
+
+    return errors;
+}
 
 module.exports = {
     createGetSimpleResult,
@@ -586,4 +650,6 @@ module.exports = {
     makeInputBackwardsCompatible,
     initResultShape,
     initPersistence,
+    isEnoughItemsCollected,
+    processZpid,
 };

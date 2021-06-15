@@ -1,16 +1,17 @@
 const Apify = require('apify');
 const _ = require('lodash');
+const {handleInitialCrawl} = require("./crawler/init");
 const {
     initProxyConfig,
     initCrawler
-} = require("./init");
+} = require("./crawler/init");
 const {LABELS, USER_AGENT} = require('./constants');
 const {
-    createQueryZpid,
-    interceptQueryId,
     queryRegionHomes,
     splitQueryState,
     quickHash,
+    isEnoughItemsCollected,
+    processZpid,
 } = require('./functions');
 
 const {log, puppeteer, sleep} = Apify.utils;
@@ -42,9 +43,6 @@ Apify.main(async () => {
         // This is used when we are in debug mode and it basically just dumps crawled data to KVS - in case that ZPID
         // is not number (eg. unexpected behaviour).
         dump,
-        // This function evaluates if we scraped enough items (provided by user in the input `input.maxItems`) and
-        // should quit scraping. If `input.maxItems == 0`, we are attempting to scrape all available items.
-        isEnoughItemsCollected,
         // This is set during LABELS.INITIAL crawler branch (See ./src/functions.js#createQueryZpid), it sets the
         // function which fetches the data from Zillow graphQL API.
         queryZpid,
@@ -52,6 +50,8 @@ Apify.main(async () => {
         // It represents all scraped items, `ZPID` is unique identifier for an listed item (home) on Zillow. See
         // (./src/functions.js#initPersistence).
         zpids,
+        // Maximum number of scraped items (homes). If 0 or not number, attempt to scrape all available items.
+        maxItems,
     } = await initCrawler(input, isDebug, proxyConfig);
 
     await extendScraperFunction(undefined, {
@@ -121,7 +121,7 @@ Apify.main(async () => {
         }],
         // Scraping is finished
         postNavigationHooks: [async () => {
-            if (isEnoughItemsCollected() && !isFinishing) {
+            if (isEnoughItemsCollected(maxItems, zpids) && !isFinishing) {
                 isFinishing = true;
                 log.info('Reached maximum items, waiting for finish');
                 await Promise.all([
@@ -146,7 +146,8 @@ Apify.main(async () => {
                 proxyInfo
             }
         ) => {
-            if (!response || isEnoughItemsCollected()) {
+            // Either there is no response or we have already scraped the desired product count
+            if (!response || isEnoughItemsCollected(maxItems, zpids)) {
                 await page.close();
                 return;
             }
@@ -169,73 +170,13 @@ Apify.main(async () => {
              * @param {string} zpid
              * @param {string} detailUrl
              */
-            const processZpid = async (zpid, detailUrl) => {
-                if (isEnoughItemsCollected()) {
-                    return;
-                }
-
-                try {
-                    if (+zpid != zpid) {
-                        throw 'Invalid non-numeric zpid';
-                    }
-
-                    if (zpids.has(`${zpid}`)) {
-                        return;
-                    }
-
-                    if (!session.isUsable()) {
-                        throw 'Not trying to retrieve data';
-                    }
-
-                    await extendOutputFunction(
-                        JSON.parse(await queryZpid(page, zpid)).data.property,
-                        {
-                            request,
-                            page,
-                            zpid,
-                        },
-                    );
-                } catch (e) {
-                    anyErrors = true;
-                    session.markBad();
-                    log.debug('processZpid', {error: e});
-
-                    if (isEnoughItemsCollected()) {
-                        return;
-                    }
-
-                    // add as a separate detail for retrying
-                    await requestQueue.addRequest({
-                        url: new URL(detailUrl || `/homedetails/${zpid}_zpid/`, 'https://www.zillow.com').toString(),
-                        userData: {
-                            label: LABELS.DETAIL,
-                            zpid: +zpid,
-                        },
-                    }, {forefront: true});
-                }
-            };
-
             const {label} = request.userData;
 
             if (label === LABELS.INITIAL || !queryZpid) {
-                log.info('Trying to get queryId...');
-
-                const {queryId, clientVersion} = await interceptQueryId(page);
-
-                log.debug('Intercepted queryId', {queryId, clientVersion});
-
-                queryZpid = createQueryZpid(queryId, clientVersion, await page.cookies());
-
-                autoscaledPool.maxConcurrency = 5;
-
-                // now that we initialized, we can add the requests
-                for (const req of startUrls) {
-                    await requestQueue.addRequest(req);
-                }
-
-                log.info('Got queryId, continuing...');
+                // Get queryZpid to be able to use zillow graphql
+                queryZpid = await handleInitialCrawl(page, requestQueue, startUrls, autoscaledPool);
             } else if (label === LABELS.DETAIL) {
-                if (isEnoughItemsCollected()) {
+                if (isEnoughItemsCollected(maxItems, zpids)) {
                     return;
                 }
 
@@ -317,9 +258,11 @@ Apify.main(async () => {
                 log.info(`Scraping ${input.zpids.length} zpids`);
 
                 for (const zpid of input.zpids) {
-                    await processZpid(zpid, '');
+                    anyErrors = await processZpid(
+                        request, page, extendOutputFunction, queryZpid, requestQueue, zpid, ''
+                    );
 
-                    if (isEnoughItemsCollected()) {
+                    if (isEnoughItemsCollected(maxItems, zpids)) {
                         break;
                     }
                 }
@@ -385,11 +328,13 @@ Apify.main(async () => {
                         await dump(zpid, results);
 
                         if (zpid) {
-                            if (isEnoughItemsCollected()) {
+                            if (isEnoughItemsCollected(maxItems, zpids)) {
                                 shouldContinue = false;
                                 break;
                             }
-                            await processZpid(zpid, detailUrl);
+                            anyErrors = await processZpid(
+                                request, page, extendOutputFunction, queryZpid, requestQueue, zpid, detailUrl
+                            );
                         }
                     }
 
@@ -458,7 +403,7 @@ Apify.main(async () => {
                             ];
 
                             for (const queryState of split) {
-                                if (isEnoughItemsCollected()) {
+                                if (isEnoughItemsCollected(maxItems, zpids)) {
                                     break;
                                 }
 
@@ -489,9 +434,11 @@ Apify.main(async () => {
                                 await dump(zpid, results);
 
                                 if (zpid) {
-                                    await processZpid(zpid, detailUrl);
+                                    anyErrors = await processZpid(
+                                        request, page, extendOutputFunction, queryZpid, requestQueue, zpid, detailUrl
+                                    );
 
-                                    if (isEnoughItemsCollected()) {
+                                    if (isEnoughItemsCollected(maxItems, zpids)) {
                                         break; // optimize runtime
                                     }
                                 }
