@@ -42,9 +42,6 @@ Apify.main(async () => {
         extendOutputFunction,
         // This passes around variables that are being updated during crawling. # TODO
         extendScraperFunction,
-        // This is used when we are in debug mode and it basically just dumps crawled data to KVS - in case that ZPID
-        // is not number (eg. unexpected behaviour).
-        dump,
         // This is set during LABELS.INITIAL crawler branch (See ./src/functions.js#createQueryZpid), it sets the
         // function which fetches the data from Zillow graphQL API.
         queryZpid,
@@ -185,10 +182,11 @@ Apify.main(async () => {
                         }
                     }
                 } else if (label === LABELS.QUERY || label === LABELS.SEARCH) {
+                    // LABELS.QUERY and LABELS.SEARCH: Process graphql query and search
                     if (label === LABELS.SEARCH) {
                         anyErrors = await handleSearch(page, request);
                     }
-                    await handleQuery(page, request, dump, requestQueue, extendOutputFunction, input, zpids, queryZpid);
+                    await handleQuery(page, request, requestQueue, extendOutputFunction, input, zpids, queryZpid);
                 }
 
                 await extendScraperFunction(undefined, {
@@ -209,6 +207,7 @@ Apify.main(async () => {
                     // We need to retire the session due to an successful scrape defense such as captcha
                     log.info(`Retiring browser session due to: "${e.message}"`);
                     await retire(session, browserController);
+                    throw e;
                 } else {
                     // Another error occurs, propagate it to the SDK
                     throw e;

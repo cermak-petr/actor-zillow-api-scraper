@@ -168,19 +168,11 @@ async function initCrawler(input, isDebug, proxyConfig) {
         },
     });
 
-    const dump = isDebug ? async (zpid, data) => {
-        if (typeof zpid !== 'number') {
-            await Apify.setValue(`DUMP-${uuid}`, data);
-        }
-    } : () => {
-    };
-
     return {
         startUrls: startUrls,
         requestQueue: requestQueue,
         extendOutputFunction: extendOutputFunction,
         extendScraperFunction: extendScraperFunction,
-        dump: dump,
         queryZpid: queryZpid,
         zpids: zpids,
         maxItems: maxItems,

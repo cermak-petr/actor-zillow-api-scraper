@@ -11,6 +11,16 @@ const {
 const _ = require('lodash');
 const {LABELS} = require("../constants");
 
+const isDebug = Apify.utils.log.getLevel() === Apify.utils.log.LEVELS.DEBUG;
+
+async function dump(zpid, data) {
+    if (isDebug) {
+        if (typeof zpid !== 'number') {
+            await Apify.setValue(`DUMP-${uuid}`, data);
+        }
+    }
+}
+
 async function handleSearch(page, request) {
     log.info(`Searching for "${request.userData.term}"`);
 
@@ -48,7 +58,7 @@ async function handleSearch(page, request) {
     }
 }
 
-async function handleQuery(page, request, dump, requestQueue, extendOutputFunction, input, zpids, queryZpid) {
+async function handleQuery(page, request, requestQueue, extendOutputFunction, input, zpids, queryZpid) {
     // Get initial searchState
     let qs = request.userData.queryState;
     let searchState;
