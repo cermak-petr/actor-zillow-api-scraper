@@ -5,6 +5,7 @@ const {
     makeInputBackwardsCompatible,
     getUrlData,
     extendFunction,
+    initPersistence,
 } = require("./functions");
 const {LABELS, TYPES} = require('./constants');
 const uuid = require('uuid').v4;
@@ -37,11 +38,7 @@ async function initCrawler(input, isDebug, proxyConfig) {
     // Toggle showing only a subset of result attributes
     const getSimpleResult = initResultShape(input.simple)
 
-    const zpids = new Set(await Apify.getValue('STATE'));
-
-    Apify.events.on('migrating', async () => {
-        await Apify.setValue('STATE', [...zpids.values()]);
-    });
+    const zpids = await initPersistence();
 
     // TODO: temp hack to get around empty output. remove this after merge to master
     makeInputBackwardsCompatible(input);
@@ -104,7 +101,7 @@ async function initCrawler(input, isDebug, proxyConfig) {
         },
     }, {forefront: true});
 
-    const isOverItems = (extra = 0) => (typeof input.maxItems === 'number' && input.maxItems > 0
+    const isEnoughItemsCollected = (extra = 0) => (typeof input.maxItems === 'number' && input.maxItems > 0
         ? (zpids.size + extra) >= input.maxItems
         : false);
 
@@ -113,7 +110,7 @@ async function initCrawler(input, isDebug, proxyConfig) {
             return getSimpleResult(data);
         },
         filter: async ({data}) => {
-            if (isOverItems()) {
+            if (isEnoughItemsCollected()) {
                 return false;
             }
 
@@ -177,7 +174,7 @@ async function initCrawler(input, isDebug, proxyConfig) {
         extendOutputFunction: extendOutputFunction,
         extendScraperFunction: extendScraperFunction,
         dump: dump,
-        isOverItems: isOverItems,
+        isEnoughItemsCollected: isEnoughItemsCollected,
         queryZpid: queryZpid,
         zpids: zpids,
     }

@@ -16,9 +16,7 @@ const {
 const {log, puppeteer, sleep} = Apify.utils;
 
 Apify.main(async () => {
-    /**
-     * @type {any}
-     */
+    // This should be actually the other way around - something like `if config.DEBUG then Apify.utils.log.setLevel...`
     const isDebug = Apify.utils.log.getLevel() === Apify.utils.log.LEVELS.DEBUG;
 
     const input = await Apify.getInput() || {
@@ -29,13 +27,30 @@ Apify.main(async () => {
     const proxyConfig = await initProxyConfig(input)
 
     let {
+        // Merged from input search term, input start URLs and input ZPIDs; it fallbacks to LABELS.SEARCH,
+        // LABELS.DETAIL and LABELS.ZPIDS crawler branches respectively. So we assume that user provided
+        // startUrls are pointing to house detail pages only.
         startUrls,
+        // On the clean run, this contains only https://www.zillow.com/homes/ and fallbacks to LABELS.INITIAL
+        // crawler branch.
         requestQueue,
+        // This maps data to expected output shape (see ./src/functions.js#initResultShape), filters out ZPIDs and
+        // pushes output data to dataset.
         extendOutputFunction,
+        // This passes around variables that are being updated during crawling. # TODO
         extendScraperFunction,
+        // This is used when we are in debug mode and it basically just dumps crawled data to KVS - in case that ZPID
+        // is not number (eg. unexpected behaviour).
         dump,
-        isOverItems,
+        // This function evaluates if we scraped enough items (provided by user in the input `input.maxItems`) and
+        // should quit scraping. If `input.maxItems == 0`, we are attempting to scrape all available items.
+        isEnoughItemsCollected,
+        // This is set during LABELS.INITIAL crawler branch (See ./src/functions.js#createQueryZpid), it sets the
+        // function which fetches the data from Zillow graphQL API.
         queryZpid,
+        // This might be initialized by the scraped ZPIDs from previous run(s) and is persisted before actor migration.
+        // It represents all scraped items, `ZPID` is unique identifier for an listed item (home) on Zillow. See
+        // (./src/functions.js#initPersistence).
         zpids,
     } = await initCrawler(input, isDebug, proxyConfig);
 
@@ -44,8 +59,6 @@ Apify.main(async () => {
     });
 
     let isFinishing = false;
-
-    // Create crawler
     const crawler = new Apify.PuppeteerCrawler({
         requestQueue,
         maxRequestRetries: input.maxRetries || 20,
@@ -67,6 +80,7 @@ Apify.main(async () => {
             stealth: input.stealth || false,
             userAgent: USER_AGENT,
         },
+        // Block unnecessary external API calls such as goolag ads and goolag analytics
         preNavigationHooks: [async ({request, page}, gotoOptions) => {
             await puppeteer.blockRequests(page, {
                 extraUrlPatterns: [
@@ -105,8 +119,9 @@ Apify.main(async () => {
                 ? 'domcontentloaded'
                 : 'load';
         }],
+        // Scraping is finished
         postNavigationHooks: [async () => {
-            if (isOverItems() && !isFinishing) {
+            if (isEnoughItemsCollected() && !isFinishing) {
                 isFinishing = true;
                 log.info('Reached maximum items, waiting for finish');
                 await Promise.all([
@@ -115,6 +130,7 @@ Apify.main(async () => {
                 ]);
             }
         }],
+        // Captcha defense
         browserPoolOptions: {
             maxOpenPagesPerBrowser: 1,
         },
@@ -130,7 +146,7 @@ Apify.main(async () => {
                 proxyInfo
             }
         ) => {
-            if (!response || isOverItems()) {
+            if (!response || isEnoughItemsCollected()) {
                 await page.close();
                 return;
             }
@@ -154,7 +170,7 @@ Apify.main(async () => {
              * @param {string} detailUrl
              */
             const processZpid = async (zpid, detailUrl) => {
-                if (isOverItems()) {
+                if (isEnoughItemsCollected()) {
                     return;
                 }
 
@@ -184,7 +200,7 @@ Apify.main(async () => {
                     session.markBad();
                     log.debug('processZpid', {error: e});
 
-                    if (isOverItems()) {
+                    if (isEnoughItemsCollected()) {
                         return;
                     }
 
@@ -219,7 +235,7 @@ Apify.main(async () => {
 
                 log.info('Got queryId, continuing...');
             } else if (label === LABELS.DETAIL) {
-                if (isOverItems()) {
+                if (isEnoughItemsCollected()) {
                     return;
                 }
 
@@ -303,7 +319,7 @@ Apify.main(async () => {
                 for (const zpid of input.zpids) {
                     await processZpid(zpid, '');
 
-                    if (isOverItems()) {
+                    if (isEnoughItemsCollected()) {
                         break;
                     }
                 }
@@ -369,7 +385,7 @@ Apify.main(async () => {
                         await dump(zpid, results);
 
                         if (zpid) {
-                            if (isOverItems()) {
+                            if (isEnoughItemsCollected()) {
                                 shouldContinue = false;
                                 break;
                             }
@@ -442,7 +458,7 @@ Apify.main(async () => {
                             ];
 
                             for (const queryState of split) {
-                                if (isOverItems()) {
+                                if (isEnoughItemsCollected()) {
                                     break;
                                 }
 
@@ -475,7 +491,7 @@ Apify.main(async () => {
                                 if (zpid) {
                                     await processZpid(zpid, detailUrl);
 
-                                    if (isOverItems()) {
+                                    if (isEnoughItemsCollected()) {
                                         break; // optimize runtime
                                     }
                                 }

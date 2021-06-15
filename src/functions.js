@@ -562,6 +562,17 @@ function initResultShape(isSimple) {
 }
 
 
+async function initPersistence() {
+    const zpids = new Set(await Apify.getValue('STATE'));
+
+    Apify.events.on('migrating', async () => {
+        await Apify.setValue('STATE', [...zpids.values()]);
+    });
+
+    return zpids;
+}
+
+
 module.exports = {
     createGetSimpleResult,
     createQueryZpid,
@@ -574,4 +585,5 @@ module.exports = {
     getUrlData,
     makeInputBackwardsCompatible,
     initResultShape,
+    initPersistence,
 };
