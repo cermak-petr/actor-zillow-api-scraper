@@ -1,14 +1,10 @@
 const Apify = require('apify');
 const _ = require('lodash');
-const {handleQuery} = require("./crawler/query");
-const {handleSearch} = require("./crawler/query");
-const {handleInitialCrawl} = require("./crawler/init");
+
+const {handleQuery, handleSearch} = require("./crawler/query");
+const {handleInitialCrawl, initProxyConfig, initCrawler} = require("./crawler/init");
 const {RetireError, handleDetailCrawl} = require("./crawler/detail");
-const {
-    initProxyConfig,
-    initCrawler
-} = require("./crawler/init");
-const {LABELS, USER_AGENT} = require('./constants');
+const {LABELS, USER_AGENT, TYPES} = require('./constants');
 const {
     queryRegionHomes,
     isEnoughItemsCollected,
@@ -16,23 +12,19 @@ const {
     retire,
 } = require('./functions');
 
-const {log, puppeteer, sleep} = Apify.utils;
+const {log, puppeteer} = Apify.utils;
 
 Apify.main(async () => {
     // This should be actually the other way around - something like `if config.DEBUG then Apify.utils.log.setLevel...`
     const isDebug = Apify.utils.log.getLevel() === Apify.utils.log.LEVELS.DEBUG;
 
-    const input = await Apify.getInput() || {
-        type: 'sold',
-        startUrls: ['https://www.zillow.com/homedetails/1801-Tyler-Ter-Prague-OK-74864/2082985658_zpid/'],
-    };
+    const input = await Apify.getInput();
 
     const proxyConfig = await initProxyConfig(input)
 
     let {
         // Merged from input search term, input start URLs and input ZPIDs; it fallbacks to LABELS.SEARCH,
-        // LABELS.DETAIL and LABELS.ZPIDS crawler branches respectively. So we assume that user provided
-        // startUrls are pointing to house detail pages only.
+        // LABELS.DETAIL and LABELS.ZPIDS crawler branches respectively.
         startUrls,
         // On the clean run, this contains only https://www.zillow.com/homes/ and fallbacks to LABELS.INITIAL
         // crawler branch.
@@ -40,7 +32,7 @@ Apify.main(async () => {
         // This maps data to expected output shape (see ./src/functions.js#initResultShape), filters out ZPIDs and
         // pushes output data to dataset.
         extendOutputFunction,
-        // This passes around variables that are being updated during crawling. # TODO
+        // This passes around variables that are being updated during crawling.
         extendScraperFunction,
         // This is set during LABELS.INITIAL crawler branch (See ./src/functions.js#createQueryZpid), it sets the
         // function which fetches the data from Zillow graphQL API.
@@ -207,11 +199,8 @@ Apify.main(async () => {
                     // We need to retire the session due to an successful scrape defense such as captcha
                     log.info(`Retiring browser session due to: "${e.message}"`);
                     await retire(session, browserController);
-                    throw e;
-                } else {
-                    // Another error occurs, propagate it to the SDK
-                    throw e;
                 }
+                throw e;
             }
         },
         handleFailedRequestFunction: async ({request}) => {
