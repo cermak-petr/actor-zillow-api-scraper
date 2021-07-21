@@ -45,10 +45,18 @@
             "description": "Limit of home detail pages to be scraped"
         },
         "minDate": {
-            "title": "Min date",
+            "title": "Minimum date",
             "type": "string",
             "editor": "textfield",
-            "description": "Oldest date allowed in results"
+            "pattern": "(\\d{4}-\\d{2}-\\d{2}|(\\d+)\\s?\\S+)",
+            "description": "Oldest date allowed in results. Can use specific dates, such as YYYY-MM-DD or relative ones, like '1 month' or '2 days'"
+        },
+        "maxDate": {
+            "title": "Maximum date",
+            "type": "string",
+            "editor": "textfield",
+            "pattern": "(\\d{4}-\\d{2}-\\d{2}|(\\d+)\\s?\\S+)",
+            "description": "Newest date allowed in results. Can use specific dates, such as YYYY-MM-DD or relative ones, like '1 month' or '2 days'"
         },
         "simple": {
             "title": "Simple results",
@@ -108,7 +116,14 @@
         "stealth": {
             "title": "Stealth",
             "description": "Apply stealth to the browser",
-            "default": true,
+            "default": false,
+            "type": "boolean",
+            "editor": "checkbox"
+        },
+        "debugLog": {
+            "title": "Debug log",
+            "description": "Enable debug log",
+            "default": false,
             "type": "boolean",
             "editor": "checkbox"
         }

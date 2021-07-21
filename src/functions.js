@@ -1,4 +1,5 @@
 const Apify = require('apify');
+const moment = require('moment');
 const Puppeteer = require('puppeteer'); // eslint-disable-line no-unused-vars
 const { createHash } = require('crypto');
 const vm = require('vm');
@@ -202,15 +203,16 @@ const queryRegionHomes = async ({ qs, type }) => {
             isPreMarketPreForeclosure: { value: true },
             isForSaleByAgent: { value: true },
         };
-    } else if (type === 'qs') {
-        qs.filterState.isAllHomes = { value: true };
     }
 
     try {
         delete qs.filterState.ah;
     } catch (e) {}
 
-    const wants = { cat1: ['listResults', 'mapResults'] };
+    const wants = {
+        cat1: ['listResults', 'mapResults'],
+        cat2: ['listResults', 'mapResults'],
+    };
 
     const resp = await fetch(`https://www.zillow.com/search/GetSearchPageState.htm?searchQueryState=${encodeURIComponent(JSON.stringify(qs))}&wants=${JSON.stringify(wants)}&requestId=${Math.floor(Math.random() * 10) + 1}`, {
         body: null,
@@ -226,7 +228,7 @@ const queryRegionHomes = async ({ qs, type }) => {
     });
 
     if (resp.status !== 200) {
-        throw `Got ${resp.status} from query`;
+        throw new Error(`Got ${resp.status} from query`);
     }
 
     return {
@@ -276,7 +278,7 @@ const createQueryZpid = (queryId, clientVersion, cookies) => (page, zpid) => {
         });
 
         if (resp.status !== 200) {
-            throw `Got status ${resp.status} from GraphQL`;
+            throw new Error(`Got status ${resp.status} from GraphQL`);
         }
 
         return (await resp.blob()).text();
@@ -466,6 +468,86 @@ const extendFunction = async ({
     };
 };
 
+/**
+ * @param {*} value
+ * @returns
+ */
+ const parseTimeUnit = (value) => {
+    if (!value) {
+        return null;
+    }
+
+    if (value === 'today' || value === 'yesterday') {
+        return (value === 'today' ? moment() : moment().subtract(1, 'day')).startOf('day');
+    }
+
+    const [, number, unit] = `${value}`.match(/^(\d+)\s?(minute|second|day|hour|month|year|week)s?$/i) || [];
+
+    if (+number && unit) {
+        return moment().subtract(+number, unit);
+    }
+
+    return moment(value);
+};
+
+/**
+ * @typedef MinMax
+ * @property {number | string} [min]
+ * @property {number | string} [max]
+ */
+
+/**
+ * @typedef {ReturnType<typeof minMaxDates>} MinMaxDates
+ */
+
+/**
+ * Generate a function that can check date intervals depending on the input
+ * @param {MinMax} param
+ */
+const minMaxDates = ({ min, max }) => {
+    const minDate = parseTimeUnit(min);
+    const maxDate = parseTimeUnit(max);
+
+    if (minDate && maxDate && maxDate.diff(minDate) < 0) {
+        throw new Error(`Minimum date ${minDate.toString()} needs to be less than max date ${maxDate.toString()}`);
+    }
+
+    return {
+        /**
+         * cloned min date, if set
+         */
+        get minDate() {
+            return minDate?.clone();
+        },
+        /**
+         * cloned max date, if set
+         */
+        get maxDate() {
+            return maxDate?.clone();
+        },
+        /**
+         * compare the given date/timestamp to the time interval
+         * @param {string | number} time
+         */
+        compare(time) {
+            const base = moment(time);
+            return (minDate ? minDate.diff(base) <= 0 : true) && (maxDate ? maxDate.diff(base) >= 0 : true);
+        },
+    };
+};
+
+/**
+ * @param {Apify.BasicCrawler} crawler
+ */
+const patchLog = (crawler) => {
+    const originalException = crawler.log.exception.bind(crawler.log);
+    crawler.log.exception = (...args) => {
+        if (!args?.[1]?.includes('handleRequestFunction')) {
+            originalException(...args);
+        }
+    };
+};
+
 module.exports = {
     createGetSimpleResult,
     createQueryZpid,
@@ -477,4 +559,6 @@ module.exports = {
     quickHash,
     getUrlData,
     makeInputBackwardsCompatible,
+    minMaxDates,
+    patchLog,
 };

@@ -1,3 +1,21 @@
+## 2021-07-21
+
+Feature:
+- Updated SDK
+- Min / max dates for listings
+- Debug log
+
+Changes:
+- Strictly filter everything if `Type` isn't "All"
+- Better management of max items
+- Handle interstitial
+
+Bug fixes:
+- FSBO listings
+- Getting query id
+- Properly retiring browser instance
+- "All" setting with search term
+
 ## 2021-01-30
 
 Features:

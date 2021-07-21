@@ -1,6 +1,8 @@
 const Apify = require('apify');
 const _ = require('lodash');
 const { LABELS, TYPES, USER_AGENT } = require('./constants');
+const fns = require('./functions');
+
 const {
     createGetSimpleResult,
     createQueryZpid,
@@ -12,7 +14,7 @@ const {
     getUrlData,
     extendFunction,
     makeInputBackwardsCompatible,
-} = require('./functions');
+} = fns;
 
 const { log, puppeteer, sleep } = Apify.utils;
 
@@ -22,7 +24,11 @@ Apify.main(async () => {
      */
     const input = await Apify.getInput();
 
-    const isDebug = Apify.utils.log.getLevel() === Apify.utils.log.LEVELS.DEBUG;
+    if (input.debugLog) {
+        log.setLevel(log.LEVELS.DEBUG);
+    }
+
+    const isDebug = input.debugLog === true;
 
     // Check input
     if (!(input.search && input.search.trim().length > 0) && !input.startUrls && !input.zpids) {
@@ -41,9 +47,10 @@ Apify.main(async () => {
     }
 
     // Initialize minimum time
-    const minTime = input.minDate
-        ? (+input.minDate || new Date(input.minDate).getTime())
-        : null;
+    const minMaxDate = fns.minMaxDates({
+        min: input.minDate,
+        max: input.maxDate,
+    });
 
     // Toggle showing only a subset of result attriutes
     const getSimpleResult = createGetSimpleResult(
@@ -198,14 +205,22 @@ Apify.main(async () => {
      * @type {ReturnType<typeof createQueryZpid>}
      */
     let queryZpid = null;
+    /**
+     * @type {any}
+     */
+    const savedQueryId = await Apify.getValue('QUERY');
 
-    await requestQueue.addRequest({
-        url: 'https://www.zillow.com/homes/',
-        uniqueKey: `${Math.random()}`,
-        userData: {
-            label: LABELS.INITIAL,
-        },
-    }, { forefront: true });
+    if (savedQueryId?.queryId && savedQueryId?.clientVersion) {
+        queryZpid = createQueryZpid(savedQueryId.queryId, savedQueryId.clientVersion, []);
+    } else {
+        await requestQueue.addRequest({
+            url: 'https://www.zillow.com/homes/for_sale/New-York,-NY_rb/',
+            uniqueKey: `${Math.random()}`,
+            userData: {
+                label: LABELS.INITIAL,
+            },
+        }, { forefront: true });
+    }
 
     const isOverItems = (extra = 0) => (typeof input.maxItems === 'number' && input.maxItems > 0
         ? (zpids.size + extra) >= input.maxItems
@@ -224,12 +239,29 @@ Apify.main(async () => {
                 return false;
             }
 
-            return (minTime ? data.datePosted <= minTime : true)
-                && !zpids.has(`${data.zpid}`);
+            if (!minMaxDate.compare(data.datePosted) || zpids.has(`${data.zpid}`)) {
+                return false;
+            }
+
+            switch (input.type) {
+                case 'sale':
+                    return data.homeStatus === 'FOR_SALE';
+                case 'fsbo':
+                    return data.homeStatus === 'FOR_SALE' && data.keystoneHomeStatus === 'ForSaleByOwner';
+                case 'rent':
+                    return data.homeStatus === 'FOR_RENT';
+                case 'sold':
+                    return data.homeStatus?.includes('SOLD');
+                case 'all':
+                default:
+                    return true;
+            }
         },
         output: async (output, { data }) => {
-            zpids.add(`${data.zpid}`);
-            await Apify.pushData(output);
+            if (data.zpid) {
+                zpids.add(`${data.zpid}`);
+                await Apify.pushData(output);
+            }
         },
         input,
         key: 'extendOutputFunction',
@@ -238,8 +270,9 @@ Apify.main(async () => {
             getSimpleResult,
             _,
             zpids,
-            minTime,
+            minMaxDate,
             TYPES,
+            fns,
             LABELS,
         },
     });
@@ -261,13 +294,14 @@ Apify.main(async () => {
             getSimpleResult,
             zpids,
             _,
+            fns,
             extendOutputFunction,
-            minTime,
+            minMaxDate,
         },
     });
 
     const dump = Apify.utils.log.LEVELS.DEBUG === Apify.utils.log.getLevel() ? async (zpid, data) => {
-        if (typeof zpid !== 'number') {
+        if (zpid != +zpid) {
             await Apify.setValue(`DUMP-${Math.random()}`, data);
         }
     } : () => {};
@@ -284,6 +318,11 @@ Apify.main(async () => {
         maxRequestRetries: input.maxRetries || 20,
         handlePageTimeoutSecs: input.handlePageTimeoutSecs || 3600,
         useSessionPool: true,
+        sessionPoolOptions: {
+            sessionOptions: {
+                maxErrorScore: 0.5,
+            },
+        },
         proxyConfiguration: proxyConfig,
         launchContext: {
             launchOptions: {
@@ -350,23 +389,23 @@ Apify.main(async () => {
         }],
         browserPoolOptions: {
             maxOpenPagesPerBrowser: 1,
+            postPageCloseHooks: [async (pageId, browserController) => {
+                if (!browserController?.launchContext?.session?.isUsable()) {
+                    await browserController.close();
+                }
+            }],
         },
         maxConcurrency: 1,
-        handlePageFunction: async ({ page, request, browserController, crawler: { autoscaledPool }, session, response, proxyInfo }) => {
+        handlePageFunction: async ({ page, request, crawler: { autoscaledPool }, session, response }) => {
             if (!response || isOverItems()) {
                 await page.close();
                 return;
             }
 
-            const retire = async () => {
-                session.retire();
-                await browserController.close();
-            };
-
             // Retire browser if captcha is found
             if (await page.$('.captcha-container')) {
-                await retire();
-                throw 'Captcha found, retrying...';
+                session.retire();
+                throw new Error('Captcha found, retrying...');
             }
 
             let anyErrors = false;
@@ -383,7 +422,7 @@ Apify.main(async () => {
 
                 try {
                     if (+zpid != zpid) {
-                        throw 'Invalid non-numeric zpid';
+                        throw new Error('Invalid non-numeric zpid');
                     }
 
                     if (zpids.has(`${zpid}`)) {
@@ -391,7 +430,7 @@ Apify.main(async () => {
                     }
 
                     if (!session.isUsable()) {
-                        throw 'Not trying to retrieve data';
+                        throw new Error('Not trying to retrieve data');
                     }
 
                     await extendOutputFunction(
@@ -433,6 +472,8 @@ Apify.main(async () => {
 
                 queryZpid = createQueryZpid(queryId, clientVersion, await page.cookies());
 
+                await Apify.setValue('QUERY', { queryId, clientVersion });
+
                 autoscaledPool.maxConcurrency = 5;
 
                 // now that we initialized, we can add the requests
@@ -452,7 +493,7 @@ Apify.main(async () => {
                     const nextData = await page.$eval('[id="__NEXT_DATA__"]', (s) => JSON.parse(s.innerHTML));
 
                     if (!nextData) {
-                        throw 'Missing data';
+                        throw new Error('Missing data');
                     }
 
                     // legacy layout, need re-enqueue
@@ -476,7 +517,7 @@ Apify.main(async () => {
                         return;
                     }
 
-                    throw 'ZPID not found in page';
+                    throw new Error('ZPID not found in page');
                 }
 
                 const scripts = await page.$x('//script[contains(., "RenderQuery") and contains(., "apiCache")]');
@@ -484,8 +525,8 @@ Apify.main(async () => {
                 // await Apify.setValue(`${request.userData.zpid}--${Math.random()}`, await page.content(), { contentType: 'text/html' });
 
                 if (!scripts.length) {
-                    await retire();
-                    throw 'Failed to load preloaded data scripts';
+                    session.retire();
+                    throw new Error('Failed to load preloaded data scripts');
                 }
 
                 log.info(`Extracting data from ${request.url}`);
@@ -517,7 +558,7 @@ Apify.main(async () => {
                 }
 
                 if (noScriptsFound) {
-                    throw 'Failed to load preloaded data from page';
+                    throw new Error('Failed to load preloaded data from page');
                 }
             } else if (label === LABELS.ZPIDS) {
                 // Extract all homes by input ZPIDs
@@ -537,15 +578,18 @@ Apify.main(async () => {
                     const text = '#search-box-input';
                     const btn = 'button#search-icon';
 
+                    await page.waitForRequest((req) => req.url().includes('/login'));
+
                     await Promise.all([
                         page.waitForSelector(text),
                         page.waitForSelector(btn),
                     ]);
 
                     await page.focus(text);
-                    await page.type(text, request.userData.term, { delay: 100 });
-
-                    await sleep(3000);
+                    await Promise.all([
+                        page.waitForResponse((res) => res.url().includes('suggestions')),
+                        page.type(text, request.userData.term, { delay: 300 }),
+                    ]);
 
                     try {
                         await Promise.all([
@@ -553,18 +597,30 @@ Apify.main(async () => {
                             page.tap(btn),
                         ]);
                     } catch (e) {
-                        await retire();
-                        throw 'Search didn\'t redirect, retrying...';
+                        log.debug(e.message);
+
+                        const interstitial = await page.$$('#interstitial-title');
+                        if (!interstitial.length) {
+                            session.retire();
+                            throw new Error('Search didn\'t redirect, retrying...');
+                        } else {
+                            const skip = await page.$x('//button[contains(., "Skip")]');
+
+                            await Promise.all([
+                                page.waitForNavigation({ timeout: 15000 }),
+                                skip[0].click(),
+                            ]);
+                        }
                     }
 
-                    if (!/(\/homes\/|_rb)/.test(page.url()) || page.url().includes('/_rb/')) {
-                        await retire();
-                        throw `Unexpected page address ${page.url()}, use a better keyword for searching or proper state or city name. Will retry...`;
+                    if ((!/(\/homes\/|_rb)/.test(page.url()) || page.url().includes('/_rb/') || page.url().includes('_zpid')) && !page.url().includes('searchQueryState')) {
+                        session.retire();
+                        throw new Error(`Unexpected page address ${page.url()}, use a better keyword for searching or proper state or city name. Will retry...`);
                     }
 
                     if (await page.$('.captcha-container')) {
-                        await retire();
-                        throw 'Captcha found when searching, retrying...';
+                        session.retire();
+                        throw new Error('Captcha found when searching, retrying...');
                     }
                 }
 
@@ -586,7 +642,12 @@ Apify.main(async () => {
                         }
                     });
 
-                    const results = _.get(pageQs, 'cat1.searchResults.listResults', []);
+                    const results = [
+                        ..._.get(pageQs, 'cat1.searchResults.listResults', []),
+                        ..._.get(pageQs, 'cat1.searchResults.mapResults', []),
+                        ..._.get(pageQs, 'cat2.searchResults.listResults', []),
+                        ..._.get(pageQs, 'cat2.searchResults.mapResults', []),
+                    ];
 
                     for (const { zpid, detailUrl } of results) {
                         await dump(zpid, results);
@@ -604,7 +665,7 @@ Apify.main(async () => {
                         qs = qs || pageQs.queryState;
 
                         if (!qs) {
-                            throw 'Query state is empty';
+                            throw new Error('Query state is empty');
                         }
 
                         log.debug('queryState', { qs });
@@ -628,7 +689,9 @@ Apify.main(async () => {
                     log.debug(e);
                 }
 
-                if (shouldContinue) {
+                log.debug('searchState', searchState);
+
+                if (shouldContinue && searchState) {
                     // Check mapResults
                     const results = [
                         ..._.get(
@@ -641,14 +704,32 @@ Apify.main(async () => {
                             'cat1.searchResults.listResults',
                             [],
                         ),
+                        ..._.get(
+                            searchState,
+                            'cat2.searchResults.mapResults',
+                            [],
+                        ),
+                        ..._.get(
+                            searchState,
+                            'cat2.searchResults.listResults',
+                            [],
+                        ),
                     ];
 
-                    if (!results || !results.length) {
-                        await retire();
-                        throw `No map results at ${JSON.stringify(qs.mapBounds)}`;
+                    if (!results?.length) {
+                        session.retire();
+                        if (searchState?.categoryTotals?.cat1?.totalResultCount
+                            || searchState?.categoryTotals?.cat2?.totalResultCount) {
+                            throw new Error(`No map results at ${JSON.stringify(qs.mapBounds)}`);
+                        } else {
+                            log.debug('Really zero results');
+                            return;
+                        }
                     }
 
-                    log.info(`Searching homes at ${JSON.stringify(qs.mapBounds)}`);
+                    log.info(`Searching homes at ${JSON.stringify(qs.mapBounds)}`, {
+                        url: page.url(),
+                    });
 
                     // Extract home data from mapResults
                     const thr = input.splitThreshold || 500;
@@ -716,7 +797,7 @@ Apify.main(async () => {
             await extendScraperFunction(undefined, {
                 page,
                 request,
-                retire,
+                session,
                 processZpid,
                 queryZpid,
                 queryRegionHomes,
@@ -724,8 +805,8 @@ Apify.main(async () => {
             });
 
             if (anyErrors) {
-                await retire();
-                throw 'Retiring session and browser...';
+                session.retire();
+                throw new Error('Retiring session and browser...');
             }
         },
         handleFailedRequestFunction: async ({ request }) => {
@@ -734,6 +815,9 @@ Apify.main(async () => {
         },
     });
 
+    if (!isDebug) {
+        fns.patchLog(crawler);
+    }
     // Start crawling
     await crawler.run();
 
