@@ -258,7 +258,7 @@ Apify.main(async () => {
             }
         },
         output: async (output, { data }) => {
-            if (data.zpid) {
+            if (data.zpid && !isOverItems()) {
                 zpids.add(`${data.zpid}`);
                 await Apify.pushData(output);
             }
@@ -421,6 +421,10 @@ Apify.main(async () => {
                 }
 
                 try {
+                    if (!zpid) {
+                        throw new Error(`Zpid not string or number`);
+                    }
+
                     if (+zpid != zpid) {
                         throw new Error('Invalid non-numeric zpid');
                     }

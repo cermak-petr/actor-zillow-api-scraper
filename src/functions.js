@@ -301,7 +301,7 @@ const createGetSimpleResult = (attributes) => (data) => {
     }
 
     for (const key in attributes) {
-        if (data[key]) { result[key] = data[key]; }
+        if (key in data) { result[key] = data[key]; }
     }
 
     if (result.hdpUrl) {
