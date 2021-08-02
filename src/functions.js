@@ -7,6 +7,91 @@ const { TYPES, LABELS } = require('./constants');
 
 const { sleep } = Apify.utils;
 
+const mappings = {
+    att: 'keywords',
+    schp: 'isPublicSchool',
+    cityv: 'isCityView',
+    wat: 'isWaterfront',
+    con: 'isCondo',
+    mouv: 'isMountainView',
+    sto: 'singleStory',
+    parka: 'onlyRentalParkingAvailable',
+    mp: 'monthlyPayment',
+    undefined: 'baths',
+    app: 'onlyRentalAcceptsApplications',
+    seo: 'SEOTypedIdField',
+    zo: 'isZillowOwnedOnly',
+    fr: 'isForRent',
+    fsbo: 'isForSaleByOwner',
+    ac: 'hasAirConditioning',
+    apa: 'isApartment',
+    sort: 'sortSelection',
+    schm: 'isMiddleSchool',
+    watv: 'isWaterView',
+    schr: 'isPrivateSchool',
+    inc: 'onlyRentalIncomeRestricted',
+    manu: 'isManufactured',
+    lau: 'onlyRentalInUnitLaundry',
+    cmsn: 'isComingSoon',
+    sf: 'isSingleFamily',
+    fore: 'isForSaleForeclosure',
+    schh: 'isHighSchool',
+    ah: 'isAllHomes',
+    cat: 'onlyRentalCatsAllowed',
+    schc: 'isCharterSchool',
+    pet: 'onlyRentalPetsAllowed',
+    auc: 'isAuction',
+    '3d': 'is3dHome',
+    mf: 'isMultiFamily',
+    nc: 'isNewConstruction',
+    tow: 'isTownhouse',
+    land: 'isLotLand',
+    basu: 'isBasementUnfinished',
+    open: 'isOpenHousesOnly',
+    basf: 'isBasementFinished',
+    dsrc: 'dataSourceSelection',
+    pmf: 'isPreMarketForeclosure',
+    fsba: 'isForSaleByAgent',
+    parks: 'parkingSpots',
+    pf: 'isPreMarketPreForeclosure',
+    gar: 'hasGarage',
+    pool: 'hasPool',
+    sdog: 'onlyRentalSmallDogsAllowed',
+    abo: 'isAcceptingBackupOffersSelected',
+    ldog: 'onlyRentalLargeDogsAllowed',
+    lot: 'lotSize',
+    schb: 'greatSchoolsRating',
+    schu: 'includeUnratedSchools',
+    rs: 'isRecentlySold',
+    pnd: 'isPendingListingsSelected',
+    hc: 'onlyRentalHousingConnector',
+    fmfb: 'onlyRentalFeaturedMultiFamilyBuilding',
+    apco: 'isApartmentOrCondo',
+    nohoa: 'includeHomesWithNoHoaData',
+    sche: 'isElementarySchool',
+    parkv: 'isParkView',
+    sch: 'enableSchools',
+};
+
+/**
+ * Transforms searchQueryState URL parameters into filters
+ * MUTATES the qs filterState
+ *
+ * @param {{ filterState: Record<string, any> }} qs
+ */
+const translateQsToFilter = (qs) => {
+    if (!qs) {
+        return {};
+    }
+
+    qs.filterState = Object.entries(qs.filterState).reduce((out, [key, value]) => {
+        out[mappings[key] ?? key] = value;
+        return out;
+    }, {});
+
+    return qs;
+};
+
 /**
  * @param {Record<string,any>} input
  */
@@ -148,10 +233,11 @@ const splitQueryState = (queryState) => {
  * Make API query for all ZPIDs in map reqion
  * @param {{
  *  qs: { filterState: any },
- *  type: keyof TYPES
+ *  type: keyof TYPES,
+ *  cat: 'cat1' | 'cat2'
  * }} queryState
  */
-const queryRegionHomes = async ({ qs, type }) => {
+const queryRegionHomes = async ({ qs, type, cat = 'cat1' }) => {
     if (type === 'rent') {
         qs.filterState = {
             isForSaleByAgent: { value: false },
@@ -205,16 +291,11 @@ const queryRegionHomes = async ({ qs, type }) => {
         };
     }
 
-    try {
-        delete qs.filterState.ah;
-    } catch (e) {}
-
     const wants = {
-        cat1: ['listResults', 'mapResults'],
-        cat2: ['listResults', 'mapResults'],
+        [cat]: ['listResults', 'mapResults'],
     };
 
-    const resp = await fetch(`https://www.zillow.com/search/GetSearchPageState.htm?searchQueryState=${encodeURIComponent(JSON.stringify(qs))}&wants=${JSON.stringify(wants)}&requestId=${Math.floor(Math.random() * 10) + 1}`, {
+    const resp = await fetch(`https://www.zillow.com/search/GetSearchPageState.htm?searchQueryState=${encodeURIComponent(JSON.stringify(qs))}&wants=${JSON.stringify(wants)}&requestId=${Math.floor(Math.random() * 70) + 1}`, {
         body: null,
         headers: {
             dnt: '1',
@@ -338,7 +419,7 @@ const getUrlData = (url) => {
     if (nUrl.searchParams.has('searchQueryState')) {
         return {
             label: LABELS.QUERY,
-            queryState: JSON.parse(nUrl.searchParams.get('searchQueryState')),
+            searchQueryState: JSON.parse(nUrl.searchParams.get('searchQueryState')),
         };
     }
 
@@ -472,7 +553,7 @@ const extendFunction = async ({
  * @param {*} value
  * @returns
  */
- const parseTimeUnit = (value) => {
+const parseTimeUnit = (value) => {
     if (!value) {
         return null;
     }
@@ -561,4 +642,5 @@ module.exports = {
     makeInputBackwardsCompatible,
     minMaxDates,
     patchLog,
+    translateQsToFilter,
 };
