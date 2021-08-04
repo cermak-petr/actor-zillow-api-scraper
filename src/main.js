@@ -715,7 +715,7 @@ Apify.main(async () => {
                     log.debug(e);
                 }
 
-                log.debug('searchState', queryStates);
+                log.debug('searchState', { queryStates });
 
                 if (shouldContinue && queryStates?.length) {
                     // Check mapResults
