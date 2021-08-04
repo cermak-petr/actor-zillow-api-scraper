@@ -330,7 +330,9 @@ Apify.main(async () => {
     const crawler = new Apify.PuppeteerCrawler({
         requestQueue,
         maxRequestRetries: input.maxRetries || 20,
-        handlePageTimeoutSecs: input.handlePageTimeoutSecs || 3600,
+        handlePageTimeoutSecs: !queryZpid
+            ? 60
+            : input.handlePageTimeoutSecs || 3600,
         useSessionPool: true,
         sessionPoolOptions: {
             sessionOptions: {
@@ -339,7 +341,14 @@ Apify.main(async () => {
         },
         proxyConfiguration: proxyConfig,
         preNavigationHooks: [async ({ request, page }, gotoOptions) => {
-            await page.setUserAgent(headerGenerator.getHeaders()['user-agent']);
+            if (queryZpid !== null) {
+                fns.changeHandlePageTimeout(crawler, input.handlePageTimeoutSecs || 3600);
+            }
+
+            const userAgent = headerGenerator.getHeaders()['user-agent'];
+            log.debug(`User-agent: ${userAgent}`);
+
+            await page.setUserAgent(userAgent);
 
             await puppeteer.blockRequests(page, {
                 urlPatterns: [
@@ -511,20 +520,23 @@ Apify.main(async () => {
 
                 const { queryId, clientVersion } = await interceptQueryId(page);
 
-                log.debug('Intercepted queryId', { queryId, clientVersion });
+                if (!queryZpid) {
+                    // avoid a racing condition here because of interceptQueryId being stuck forever or for a long time
+                    log.debug('Intercepted queryId', { queryId, clientVersion });
 
-                queryZpid = createQueryZpid(queryId, clientVersion, await page.cookies());
+                    queryZpid = createQueryZpid(queryId, clientVersion, await page.cookies());
 
-                await Apify.setValue('QUERY', { queryId, clientVersion });
+                    await Apify.setValue('QUERY', { queryId, clientVersion });
 
-                autoscaledPool.maxConcurrency = 10;
+                    autoscaledPool.maxConcurrency = 10;
 
-                // now that we initialized, we can add the requests
-                for (const req of startUrls) {
-                    await requestQueue.addRequest(req);
+                    // now that we initialized, we can add the requests
+                    for (const req of startUrls) {
+                        await requestQueue.addRequest(req);
+                    }
+
+                    log.info('Got queryId, continuing...');
                 }
-
-                log.info('Got queryId, continuing...');
             } else if (label === LABELS.DETAIL) {
                 if (isOverItems()) {
                     return;

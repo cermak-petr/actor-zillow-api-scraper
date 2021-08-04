@@ -167,6 +167,18 @@ const proxyConfiguration = async ({
 };
 
 /**
+ * Patch the crawler instance for new timeouts
+ *
+ * @param {Apify.BrowserCrawler} crawler
+ * @param {number} handlePageTimeoutSecs
+ */
+const changeHandlePageTimeout = (crawler, handlePageTimeoutSecs) => {
+    crawler.handlePageTimeoutSecs = handlePageTimeoutSecs;
+    crawler.handlePageTimeoutMillis = handlePageTimeoutSecs * 1000;
+    crawler.handleRequestTimeoutMillis = crawler.handlePageTimeoutMillis;
+};
+
+/**
  * Intercept home data API request and extract it's QueryID
  * @param {Puppeteer.Page} page
  */
@@ -175,7 +187,8 @@ const interceptQueryId = async (page) => {
 
     await page.setRequestInterception(true);
 
-    page.on('request', (r) => {
+    /** @type {(request: Puppeteer.HTTPRequest) => void} */
+    const interceptRequest = (r) => {
         const url = r.url();
 
         if (url.includes('https://www.zillow.com/graphql')) {
@@ -193,15 +206,25 @@ const interceptQueryId = async (page) => {
         }
 
         r.continue();
-    });
+    };
+
+    page.on('request', interceptRequest);
 
     await page.waitForSelector('a.list-card-link');
     await page.click('a.list-card-link');
 
-    return Promise.race([
-        sleep(60000).then(() => reject(new Error('Failed to find queryId'))),
-        promise,
-    ]);
+    try {
+        return await Promise.race([
+            sleep(60000).then(() => reject(new Error('Failed to find queryId'))),
+            promise,
+        ]);
+    } finally {
+        try {
+            // lol puppeteer?
+            page.off('request', interceptRequest);
+            await page.setRequestInterception(false);
+        } catch (e) {}
+    }
 };
 
 /**
@@ -643,4 +666,5 @@ module.exports = {
     minMaxDates,
     patchLog,
     translateQsToFilter,
+    changeHandlePageTimeout,
 };
