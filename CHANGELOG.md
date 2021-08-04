@@ -1,3 +1,13 @@
+## 2021-08-03
+
+Feature:
+- Update SDK to latest
+- Translation of searchQueryState to search query
+- Use header generator for user-agent
+
+Bug fixes:
+- Workaround too many captchas
+
 ## 2021-07-21
 
 Feature:

@@ -1,6 +1,7 @@
 const Apify = require('apify');
+const HeaderGenerator = require('header-generator');
 const _ = require('lodash');
-const { LABELS, TYPES, USER_AGENT } = require('./constants');
+const { LABELS, TYPES } = require('./constants');
 const fns = require('./functions');
 
 const {
@@ -311,6 +312,18 @@ Apify.main(async () => {
         label: 'SETUP',
     });
 
+    const headerGenerator = new HeaderGenerator({
+        browsers: [
+            { name: 'chrome', minVersion: 87 },
+        ],
+        devices: [
+            'desktop',
+        ],
+        operatingSystems: process.platform === 'win32'
+            ? ['windows']
+            : ['linux'],
+    });
+
     let isFinishing = false;
 
     // Create crawler
@@ -325,21 +338,6 @@ Apify.main(async () => {
             },
         },
         proxyConfiguration: proxyConfig,
-        launchContext: {
-            launchOptions: {
-                args: [
-                    '--enable-features=NetworkService',
-                    '--ignore-certificate-errors',
-                    '--disable-blink-features=AutomationControlled', // removes webdriver from window.navigator
-                ],
-                devtools: isDebug,
-                ignoreHTTPSErrors: true,
-                useIncognitoPages: true,
-                maxOpenPagesPerInstance: 1, // too many connections on the same proxy/session = captcha
-            },
-            stealth: input.stealth || false,
-            userAgent: USER_AGENT,
-        },
         preNavigationHooks: [async ({ request, page }, gotoOptions) => {
             await puppeteer.blockRequests(page, {
                 extraUrlPatterns: [
@@ -390,13 +388,28 @@ Apify.main(async () => {
         }],
         browserPoolOptions: {
             maxOpenPagesPerBrowser: 1,
+            preLaunchHooks: [async (pageId, launchContext) => {
+                launchContext.launchOptions = {
+                    ...launchContext.launchOptions,
+                    bypassCSP: true,
+                    ignoreHTTPSErrors: true,
+                    devtools: input.debugLog,
+                    args: [
+                        `--user-agent=${headerGenerator.getHeaders()['user-agent']}`,
+                        '--enable-features=NetworkService',
+                        '--ignore-certificate-errors',
+                        '--disable-blink-features=AutomationControlled', // removes webdriver from window.navigator
+                    ],
+                };
+            }],
             postPageCloseHooks: [async (pageId, browserController) => {
                 if (!browserController?.launchContext?.session?.isUsable()) {
+                    log.debug('Session is not usable');
                     await browserController.close();
                 }
             }],
         },
-        maxConcurrency: 1,
+        maxConcurrency: !queryZpid ? 1 : 10,
         handlePageFunction: async ({ page, request, crawler: { autoscaledPool }, session, response }) => {
             if (!response || isOverItems()) {
                 await page.close();
@@ -481,7 +494,7 @@ Apify.main(async () => {
 
                 await Apify.setValue('QUERY', { queryId, clientVersion });
 
-                autoscaledPool.maxConcurrency = 5;
+                autoscaledPool.maxConcurrency = 10;
 
                 // now that we initialized, we can add the requests
                 for (const req of startUrls) {
@@ -595,12 +608,12 @@ Apify.main(async () => {
                     await page.focus(text);
                     await Promise.all([
                         page.waitForResponse((res) => res.url().includes('suggestions')),
-                        page.type(text, request.userData.term, { delay: 300 }),
+                        page.type(text, request.userData.term, { delay: 150 }),
                     ]);
 
                     try {
                         await Promise.all([
-                            page.waitForNavigation({ timeout: 15000 }),
+                            page.waitForNavigation({ timeout: 10000 }),
                             page.tap(btn),
                         ]);
                     } catch (e) {
@@ -613,10 +626,15 @@ Apify.main(async () => {
                         } else {
                             const skip = await page.$x('//button[contains(., "Skip")]');
 
-                            await Promise.all([
-                                page.waitForNavigation({ timeout: 15000 }),
-                                skip[0].click(),
-                            ]);
+                            try {
+                                await Promise.all([
+                                    page.waitForNavigation({ timeout: 15000 }),
+                                    skip[0].click(),
+                                ]);
+                            } catch (e) {
+                                log.debug(`Insterstitial`, { message: e.message });
+                                throw new Error('Search page didn\'t redirect in time');
+                            }
                         }
                     }
 
