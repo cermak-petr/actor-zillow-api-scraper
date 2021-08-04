@@ -395,6 +395,7 @@ Apify.main(async () => {
                     ignoreHTTPSErrors: true,
                     devtools: input.debugLog,
                     args: [
+                        ...(launchContext?.launchOptions?.args ?? []),
                         `--user-agent=${headerGenerator.getHeaders()['user-agent']}`,
                         '--enable-features=NetworkService',
                         '--ignore-certificate-errors',
@@ -628,7 +629,7 @@ Apify.main(async () => {
 
                             try {
                                 await Promise.all([
-                                    page.waitForNavigation({ timeout: 15000 }),
+                                    page.waitForNavigation({ timeout: 25000 }),
                                     skip[0].click(),
                                 ]);
                             } catch (e) {
