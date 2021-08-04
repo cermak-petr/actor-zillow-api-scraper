@@ -394,6 +394,7 @@ Apify.main(async () => {
                     bypassCSP: true,
                     ignoreHTTPSErrors: true,
                     devtools: input.debugLog,
+                    headless: false,
                     args: [
                         ...(launchContext?.launchOptions?.args ?? []),
                         `--user-agent=${headerGenerator.getHeaders()['user-agent']}`,
