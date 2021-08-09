@@ -1,7 +1,7 @@
 const Apify = require('apify');
 const HeaderGenerator = require('header-generator');
 const _ = require('lodash');
-const { LABELS, TYPES } = require('./constants');
+const { LABELS, TYPES, INITIAL_URL } = require('./constants');
 const fns = require('./functions');
 
 const {
@@ -216,7 +216,7 @@ Apify.main(async () => {
         queryZpid = createQueryZpid(savedQueryId.queryId, savedQueryId.clientVersion, []);
     } else {
         await requestQueue.addRequest({
-            url: 'https://www.zillow.com/homes/for_sale/New-York,-NY_rb/',
+            url: INITIAL_URL,
             uniqueKey: `${Math.random()}`,
             userData: {
                 label: LABELS.INITIAL,
@@ -331,20 +331,17 @@ Apify.main(async () => {
         requestQueue,
         maxRequestRetries: input.maxRetries || 20,
         handlePageTimeoutSecs: !queryZpid
-            ? 60
+            ? 120
             : input.handlePageTimeoutSecs || 3600,
         useSessionPool: true,
         sessionPoolOptions: {
+            maxPoolSize: 10,
             sessionOptions: {
                 maxErrorScore: 0.5,
             },
         },
         proxyConfiguration: proxyConfig,
         preNavigationHooks: [async ({ request, page }, gotoOptions) => {
-            if (queryZpid !== null) {
-                fns.changeHandlePageTimeout(crawler, input.handlePageTimeoutSecs || 3600);
-            }
-
             const userAgent = headerGenerator.getHeaders()['user-agent'];
             log.debug(`User-agent: ${userAgent}`);
 
@@ -408,8 +405,10 @@ Apify.main(async () => {
                 label: 'GOTO',
             });
 
+            const { label } = request.userData;
+
             gotoOptions.timeout = 60000;
-            gotoOptions.waitUntil = request.userData.label === LABELS.DETAIL
+            gotoOptions.waitUntil = label === LABELS.DETAIL
                 ? 'domcontentloaded'
                 : 'load';
         }],
@@ -433,6 +432,10 @@ Apify.main(async () => {
                     devtools: input.debugLog,
                     headless: false,
                 };
+
+                if (queryZpid !== null) {
+                    fns.changeHandlePageTimeout(crawler, input.handlePageTimeoutSecs || 3600);
+                }
             }],
             postPageCloseHooks: [async (pageId, browserController) => {
                 if (!browserController?.launchContext?.session?.isUsable()) {
@@ -442,7 +445,7 @@ Apify.main(async () => {
             }],
         },
         maxConcurrency: !queryZpid ? 1 : 10,
-        handlePageFunction: async ({ page, request, crawler: { autoscaledPool }, session, response }) => {
+        handlePageFunction: async ({ page, request, crawler: { autoscaledPool }, session, response, proxyInfo }) => {
             if (!response || isOverItems()) {
                 await page.close();
                 return;
@@ -483,6 +486,8 @@ Apify.main(async () => {
                         throw new Error('Not trying to retrieve data');
                     }
 
+                    log.debug(`Extracting ${zpid}`);
+
                     await extendOutputFunction(
                         JSON.parse(await queryZpid(page, zpid)).data.property,
                         {
@@ -516,26 +521,35 @@ Apify.main(async () => {
             const { label } = request.userData;
 
             if (label === LABELS.INITIAL || !queryZpid) {
-                log.info('Trying to get queryId...');
+                try {
+                    log.info('Trying to get queryId...');
 
-                const { queryId, clientVersion } = await interceptQueryId(page);
+                    const { queryId, clientVersion } = await interceptQueryId(page, proxyInfo);
 
-                if (!queryZpid) {
-                    // avoid a racing condition here because of interceptQueryId being stuck forever or for a long time
-                    log.debug('Intercepted queryId', { queryId, clientVersion });
-
-                    queryZpid = createQueryZpid(queryId, clientVersion, await page.cookies());
-
-                    await Apify.setValue('QUERY', { queryId, clientVersion });
-
-                    autoscaledPool.maxConcurrency = 10;
-
-                    // now that we initialized, we can add the requests
-                    for (const req of startUrls) {
-                        await requestQueue.addRequest(req);
+                    if (!queryId || !clientVersion) {
+                        throw new Error('queryId unavailable');
                     }
 
-                    log.info('Got queryId, continuing...');
+                    if (!queryZpid) {
+                        // avoid a racing condition here because of interceptQueryId being stuck forever or for a long time
+                        log.debug('Intercepted queryId', { queryId, clientVersion });
+
+                        queryZpid = createQueryZpid(queryId, clientVersion);
+
+                        await Apify.setValue('QUERY', { queryId, clientVersion });
+
+                        autoscaledPool.maxConcurrency = 10;
+
+                        // now that we initialized, we can add the requests
+                        for (const req of startUrls) {
+                            await requestQueue.addRequest(req);
+                        }
+
+                        log.info('Got queryId, continuing...');
+                    }
+                } catch (e) {
+                    session.retire();
+                    throw e;
                 }
             } else if (label === LABELS.DETAIL) {
                 if (isOverItems()) {

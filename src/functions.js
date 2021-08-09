@@ -1,11 +1,12 @@
 const Apify = require('apify');
 const moment = require('moment');
+const _ = require('lodash');
 const Puppeteer = require('puppeteer'); // eslint-disable-line no-unused-vars
 const { createHash } = require('crypto');
 const vm = require('vm');
 const { TYPES, LABELS } = require('./constants');
 
-const { sleep } = Apify.utils;
+const { sleep, log, requestAsBrowser } = Apify.utils;
 
 const mappings = {
     att: 'keywords',
@@ -102,19 +103,37 @@ const makeInputBackwardsCompatible = (input) => {
 };
 
 const deferred = () => {
-    /** @type {(...args: any) => void} */
-    let resolve = () => { };
+    let isResolved = false;
+    /** @type {(res?: any) => void} */
+    let resolve = () => {};
     /** @type {(err: Error) => void} */
-    let reject = () => { };
+    let reject = () => {};
 
     const promise = new Promise((r1, r2) => {
-        resolve = /** @type {any} */(r1);
-        reject = r2;
+        resolve = (res) => {
+            if (!isResolved) {
+                isResolved = true;
+                setTimeout(() => {
+                    r1(res);
+                });
+            }
+        };
+        reject = (err) => {
+            if (!isResolved) {
+                isResolved = true;
+                setTimeout(() => {
+                    r2(err);
+                });
+            }
+        };
     });
 
     return {
         resolve,
         reject,
+        get isResolved() {
+            return isResolved;
+        },
         promise,
     };
 };
@@ -181,49 +200,46 @@ const changeHandlePageTimeout = (crawler, handlePageTimeoutSecs) => {
 /**
  * Intercept home data API request and extract it's QueryID
  * @param {Puppeteer.Page} page
+ * @param {Apify.ProxyInfo} proxy
  */
-const interceptQueryId = async (page) => {
-    const { promise, resolve, reject } = deferred();
+const interceptQueryId = async (page, proxy) => {
+    await page.waitForFunction(() => {
+        return [...document.scripts].some((s) => s.src.includes('variants-'));
+    });
 
-    await page.setRequestInterception(true);
-
-    /** @type {(request: Puppeteer.HTTPRequest) => void} */
-    const interceptRequest = (r) => {
-        const url = r.url();
-
-        if (url.includes('https://www.zillow.com/graphql')) {
-            const payload = r.postData();
-
-            if (payload) {
-                try {
-                    const data = JSON.parse(payload);
-
-                    if (data.operationName === 'ForSaleDoubleScrollFullRenderQuery') {
-                        resolve(data);
-                    }
-                } catch (e) { }
-            }
-        }
-
-        r.continue();
-    };
-
-    page.on('request', interceptRequest);
-
-    await page.waitForSelector('a.list-card-link');
-    await page.click('a.list-card-link');
+    const src = await page.evaluate(async () => {
+        return [...document.scripts].find((s) => s.src.includes('variants-'))?.src;
+    });
 
     try {
-        return await Promise.race([
-            sleep(60000).then(() => reject(new Error('Failed to find queryId'))),
-            promise,
-        ]);
-    } finally {
-        try {
-            // lol puppeteer?
-            page.off('request', interceptRequest);
-            await page.setRequestInterception(false);
-        } catch (e) {}
+        if (!src) {
+            throw new Error('src is missing');
+        }
+
+        const response = await requestAsBrowser({
+            url: src,
+            proxyUrl: proxy.url,
+            abortFunction: () => false,
+        });
+
+        if (!response) {
+            throw new Error('Response is empty');
+        }
+
+        if (![200, 304, 301, 302].includes(response.statusCode)) {
+            throw new Error(`Status code ${response.statusCode}`);
+        }
+
+        const scriptContent = response.body;
+
+        return {
+            queryId: scriptContent.match(/ForSaleDoubleScrollFullRenderQuery:"([^"]+)"/)?.[1],
+            clientVersion: scriptContent.match(/clientVersion:"([^"]+)"/)?.[1],
+        };
+    } catch (e) {
+        log.debug(`interceptQueryId error ${e.message}`, { src });
+
+        throw new Error('Failed to get queryId');
     }
 };
 
@@ -346,11 +362,10 @@ const queryRegionHomes = async ({ qs, type, cat = 'cat1' }) => {
  *
  * @param {string} queryId
  * @param {string} clientVersion
- * @param {Puppeteer.Cookie[]} cookies
  * @returns {(page: Puppeteer.Page, zpid: string) => Promise<any>}
  */
-const createQueryZpid = (queryId, clientVersion, cookies) => (page, zpid) => {
-    return page.evaluate(async ({ zpid, queryId, clientVersion }) => { // eslint-disable-line no-shadow
+const createQueryZpid = (queryId, clientVersion) => (page, zpid) => {
+    return page.evaluate(async ({ zpid, queryId, clientVersion }) => {
         zpid = +zpid || zpid;
 
         const body = JSON.stringify({
@@ -375,10 +390,11 @@ const createQueryZpid = (queryId, clientVersion, cookies) => (page, zpid) => {
                 accept: '*/*',
                 'content-type': 'text/plain',
                 origin: document.location.origin,
+                pragma: 'no-cache',
                 referer: `${document.location.origin}/`,
             },
             mode: 'cors',
-            credentials: 'omit',
+            credentials: 'include',
         });
 
         if (resp.status !== 200) {

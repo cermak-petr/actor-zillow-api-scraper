@@ -23,7 +23,10 @@ const TYPES = {
     qs: 'qs',
 };
 
+const INITIAL_URL = 'https://www.zillow.com/homes/Los-Angeles_rb/';
+
 module.exports = {
     LABELS,
     TYPES,
+    INITIAL_URL,
 };
