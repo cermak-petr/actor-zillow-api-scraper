@@ -1,34 +1,49 @@
-### Zillow Scraper
+## Features
 
-Zillow Scraper is an [Apify actor](https://apify.com/actors) for extracting data about homes from [Zillow.com](https://zillow.com). It allows you to search homes in any location and extract detailed information about each one. It is build on top of [Apify SDK](https://sdk.apify.com/) and you can run it both on [Apify platform](https://my.apify.com) and locally.
+Our free Zillow Real Estate Scraper lets you extract data from real estate listings on [Zillow.com](https://zillow.com). It enables you to search properties in any location and extract detailed information, such as full addresses, longitude, latitude, price, description, URL, photos, number of bedrooms and bathrooms, and all other information available.
 
-The way it works is by accesing Zillow's internal API and recursively splitting the map 4 ways to overcome the limit of 500 results per search. To limit the number of outputted results, you can set the maximum depth of the 4-way split zooms. This is done using the `maxLevel` attribute.
+## Why scrape Zillow?
+Zillow has over 110 million properties in its database, more than 245 million monthly unique visitors, and 80% of all homes in the United States have been viewed on the website. 
 
-- [Input](#input)
-- [Output](#output)
-- [Map splitting](#map-splitting)
-- [Compute units consumption](#compute-units-consumption)
-- [Extend output function](#extend-output-function)
+So what could you do with all that real estate listings data?
 
-### Input
+- Use the data to add value to your real estate business by providing extra information to your visitors.
+- Extract business intelligence to predict the future of the real estate market, track demographic changes, and identify popular new neighborhoods.
+- Make smarter investment decisions by ensuring that you understand how the market is changing.
+- Automate real estate agency lead generation and make sure that you can find, and keep, the right clients in the long term.
+- Find new ways to provide tech services to real estate agencies and local listings agencies.
+- Train AI models to predict future trends and act fast when opportuities arise.
 
+These are just some ideas to get you thinking about how web scraping can give you the data you need. Check out our dedicated [Real Estate page](https://apify.com/industries/real-estate) for more inspiration.
+
+## Tutorial and further reading
+Check out our [step-by-step guide](https://blog.apify.com/step-by-step-guide-to-scraping-zillow/) to using the Zillow Real Estate Scraper and you'll be scraping listings in no time! Or read about how [web scraping is revolutionizing](https://blog.apify.com/how-web-scraping-is-revolutionizing-the-real-estate-business-9888ea8d0beb/) the real estate business.
+
+## What about the Zillow API?
+Zillow has a [great API](https://www.zillow.com/howto/api/APIOverview.htm), but it does impose some restrictions on users, such as the number of API calls per page at the same time. This scraper actually uses the Zillow API, but it recursively splits the map four ways to overcome the limits per search. To limit the number of results, you can set the maximum depth of the four-way split zooms. This is done using the `maxLevel` attribute.
+
+## Cost of usage
+The average cost of using the Zillow Scraper is about **$0.25 for every 2,000 results** scraped.
+
+Note that it is much more efficient to run one longer scrape (at least one minute) than more shorter ones because of the startup time.
+
+## Input
 | Field | Type | Description | Default value
 | ----- | ---- | ----------- | -------------|
-| search | string | Query string to be searched on the site | `"Los Angeles"` |
-| startUrls | array | List of [Request](https://sdk.apify.com/docs/api/request#docsNav) objects that will be deeply crawled. The URL can be any Zillow.com home list page | none |
+| search | string | Query string to be searched | `"Los Angeles"` |
+| startUrls | array | List of [request](https://sdk.apify.com/docs/api/request#docsNav) objects that will be deeply crawled. The URL can be any Zillow.com home listing page. | none |
 | maxItems | number | Maximum number of pages that will be scraped | `200` |
 | maxLevel | number | Maximum map splitting level | `20` |
 | minDate | string | Minimum date of the results allowed (timestamp or date string) | none |
 | simple | boolean | Toggle whether simplified results will be returned | `true` |
 | extendOutputFunction | string | Function that takes Zillow home data object as argument and returns data that will be merged with the default output. More information in [Extend output function](#extend-output-function) | `async ({ item, data }) => { return item; }` |
-| extendScraperFunction | string | Allows to add additional functionality to the scraper. More information in [Extend scraper function](#extend-scraper-function) | `async ({ item, data, customData, Apify }) => { }` |
+| extendScraperFunction | string | Allows you to add additional functionality to the scraper. More details in [Extend scraper function](#extend-scraper-function) | `async ({ item, data, customData, Apify }) => { }` |
 | proxyConfiguration | object | Proxy settings of the run. If you have access to Apify proxy, leave the default settings. If not, you can set `{ "useApifyProxy": false" }` to disable proxy usage | `{ "useApifyProxy": true }`|
 
 Either the `search` or `startUrls` atrribute has to be set.
 
-### Output
-
-Output is stored in a dataset. Each item is information about a home.
+## Output
+Output is stored in a dataset. Each item is information about a property home.
 If the `simple` attribute is set, an example result may look like this:
 
 ```jsonc
@@ -61,28 +76,25 @@ If the `simple` attribute is set, an example result may look like this:
 ```
 
 If the `simple` attribute is not set, the result will contain many more attributes.
-You can find example of a full result [here](https://pastebin.com/dRxuZmNQ).
+You can find an example of a full result [here](https://pastebin.com/dRxuZmNQ).
 
 ### Map splitting
+To overcome the Zillow API limits of 1,000 calls per day and 20 calls per page, the scraper uses Zillow's internal API to search for homes on a rectangular section of a map. 
 
-To overcome the limit of 500 results per page, the crawler uses Zillow's internal API to search for homes on a rectangular section of a map. If the number of results on the map is higher than 500, the map is split into 4 quadrants and zoomed. Each of these quadrants is searched for homes and can again contain 500 results (that means using 1 split, we've increased the total result limit to 2000). Unless the result count in the quadrant is less than 500 (no need to split anymore), the quadrant is split again and so on. To limit this behavior, you can set the `maxLevel` attribute. That way, the map will be split only a maximum of `maxLevel` times, even if the number of results is higher than 500.
+*Note that the limit at the time of creating this actor was 500 results per page, so the calculations below are based on that figure.* 
 
-### Compute units consumption
-
-Keep in mind that it is much more efficient to run one longer scrape (at least one minute) than more shorter ones because of the startup time.
-
-The average consumption is about **1 Compute unit per 2000 results** scraped.
+If the number of results on the map is higher than 500, the map is split into four quadrants and zoomed. Each of these quadrants is searched for homes and can again contain 500 results (that means using 1 split, we've increased the total result limit to 2,000). Unless the result count in the quadrant is less than 500 (no need to split anymore), the quadrant is split again and so on. To limit this behavior, you can set the `maxLevel` attribute. That way, the map will be split only a maximum of `maxLevel` times, even if the number of results is higher than 500.
 
 ### Extend output function
-
 You can use this function to update the default output of this actor. This function gets Zillow internal home data object as an argument, so you can choose which other attributes you would like to add. The output from this function will get merged with the default output.
 
-The internal home object contains huge amounts of data - [example](https://pastebin.com/AW9KKGJ4)
+The internal home object contains huge amounts of data - here's an [example](https://pastebin.com/AW9KKGJ4).
+
 Any of these attributes can be added to the result object.
 
 The return value of this function has to be an object!
 
-You can use this function to achieve 3 different things:
+You can use this function to achieve three different things:
 - Add a new field - Return object with a field that is not in the default output
 - Change a field - Return an existing field with a new value
 - Remove a field - Return an existing field with a value `undefined`
@@ -101,13 +113,11 @@ async ({ item, data }) => {
 }
 ```
 
-This example will add a new field `schools`, remove the `photos` field and
+This example will add a new field `schools`, remove the `photos` field, and
 omit the output if there's no `schools` information
 
 ### Extend Scraper function
-
-You can add additional functionality directly inside the `handlePageFunction` of the scraper without modifying the existing code.
-This function receives internal functions that can be used to enqueue, fetch or control the scraper.
+You can add additional functionality directly inside the `handlePageFunction` of the scraper without modifying the existing code. This function receives internal functions that can be used to enqueue, fetch, or control the scraper.
 
 ```js
 async ({ state, request, requestQueue, Apify, LABELS, TYPES, processZpids, queryRegionHomes, customData }) => {
@@ -123,6 +133,5 @@ async ({ state, request, requestQueue, Apify, LABELS, TYPES, processZpids, query
 }
 ```
 
-### Epilogue
-
-Thank you for trying my actor. If you have any feedback or  if you find any bug, please create an issue on the [Github page](https://github.com/cermak-petr/actor-zillow-api-scraper).
+## Changelog
+Zillow Real Estate Scraper is actively maintained and regularly updated. You can always find the latest fixes and changes in the [changelog](https://github.com/cermak-petr/actor-zillow-api-scraper/blob/master/CHANGELOG.md).
