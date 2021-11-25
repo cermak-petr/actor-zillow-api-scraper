@@ -54,53 +54,44 @@ Apify.main(async () => {
         max: input.maxDate,
     });
 
-    // Toggle showing only a subset of result attriutes
+    // Toggle showing only a subset of result attributes
+
+    const simpleResult = {
+        address: true,
+        bedrooms: true,
+        bathrooms: true,
+        price: true,
+        yearBuilt: true,
+        longitude: true,
+        homeStatus: true,
+        latitude: true,
+        description: true,
+        livingArea: true,
+        currency: true,
+        hdpUrl: true,
+        hugePhotos: true,
+    };
+
     const getSimpleResult = createGetSimpleResult(
         input.simple
-            ? {
-                address: true,
-                bedrooms: true,
-                bathrooms: true,
-                price: true,
-                yearBuilt: true,
-                longitude: true,
-                homeStatus: true,
-                latitude: true,
-                description: true,
-                livingArea: true,
-                currency: true,
-                hdpUrl: true,
-                hugePhotos: true,
-            }
+            ? simpleResult
             : {
+                ...simpleResult,
                 datePosted: true,
                 isZillowOwned: true,
                 priceHistory: true,
                 zpid: true,
-                homeStatus: true,
-                address: true,
-                bedrooms: true,
-                bathrooms: true,
-                price: true,
-                yearBuilt: true,
                 isPremierBuilder: true,
-                longitude: true,
-                latitude: true,
-                description: true,
                 primaryPublicVideo: true,
                 tourViewCount: true,
                 postingContact: true,
                 unassistedShowing: true,
-                livingArea: true,
-                currency: true,
                 homeType: true,
                 comingSoonOnMarketDate: true,
                 timeZone: true,
-                hdpUrl: true,
                 newConstructionType: true,
                 moveInReady: true,
                 moveInCompletionDate: true,
-                hugePhotos: true,
                 lastSoldPrice: true,
                 contingentListingType: true,
                 zestimate: true,
@@ -150,12 +141,9 @@ Apify.main(async () => {
 
     const zpids = new Set(await Apify.getValue('STATE'));
 
-    Apify.events.on('migrating', async () => {
+    Apify.events.on('persistState', async () => {
         await Apify.setValue('STATE', [...zpids.values()]);
     });
-
-    // TODO: temp hack to get around empty output. remove this after merge to master
-    makeInputBackwardsCompatible(input);
 
     const requestQueue = await Apify.openRequestQueue();
 
@@ -448,6 +436,9 @@ Apify.main(async () => {
         handlePageFunction: async ({ page, request, crawler: { autoscaledPool }, session, response, proxyInfo }) => {
             if (!response || isOverItems()) {
                 await page.close();
+                if (!response) {
+                    throw new Error('No response from page');
+                }
                 return;
             }
 
@@ -723,6 +714,8 @@ Apify.main(async () => {
                         ..._.get(pageQs, 'cat2.searchResults.mapResults', []),
                     ];
 
+                    log.info(`Page qs length: ${Object.keys(pageQs).length}`);
+
                     for (const { zpid, detailUrl } of results) {
                         await dump(zpid, results);
 
@@ -798,7 +791,7 @@ Apify.main(async () => {
                             throw new Error(`No map results but result count is ${totalCount}`);
                         } else {
                             log.debug('Really zero results');
-                            return;
+                            throw new Error(`Zero results found. Retry request.`);
                         }
                     }
 
