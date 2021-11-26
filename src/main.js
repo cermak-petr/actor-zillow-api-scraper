@@ -36,11 +36,6 @@ Apify.main(async () => {
         throw new Error('Either "search", "startUrls" or "zpids" attribute has to be set!');
     }
 
-    if (input.startUrls && input.type) {
-        log.warning(`Input type "${input.type}" will be ignored as the value is derived from start url.
-        Check if your start urls match the desired home status.`);
-    }
-
     const proxyConfig = await proxyConfiguration({
         proxyConfig: {
             ...input.proxyConfiguration,
@@ -170,6 +165,11 @@ Apify.main(async () => {
     }
 
     if (input.startUrls && input.startUrls.length) {
+        if (input.type) {
+            log.warning(`Input type "${input.type}" will be ignored as the value is derived from start url.
+            Check if your start urls match the desired home status.`);
+        }
+
         const requestList = await Apify.openRequestList('STARTURLS', input.startUrls);
 
         let req;
@@ -205,7 +205,7 @@ Apify.main(async () => {
     const savedQueryId = await Apify.getValue('QUERY');
 
     if (savedQueryId?.queryId && savedQueryId?.clientVersion) {
-        queryZpid = createQueryZpid(savedQueryId.queryId, savedQueryId.clientVersion, []);
+        queryZpid = createQueryZpid(savedQueryId.queryId, savedQueryId.clientVersion);
     } else {
         await requestQueue.addRequest({
             url: INITIAL_URL,
@@ -540,7 +540,6 @@ Apify.main(async () => {
 
                         // now that we initialized, we can add the requests
                         for (const req of startUrls) {
-                            log.info(`Request: ${req.url}`);
                             await requestQueue.addRequest(req);
                         }
 
@@ -700,6 +699,7 @@ Apify.main(async () => {
                 // Get initial searchState
                 const queryStates = [];
                 let totalCount = 0;
+                let totalResults = 0;
                 let shouldContinue = true;
 
                 try {
@@ -722,8 +722,6 @@ Apify.main(async () => {
                         ..._.get(pageQs, 'cat2.searchResults.mapResults', []),
                     ];
 
-                    log.info(`Page qs length: ${Object.keys(pageQs).length}`);
-
                     for (const { zpid, detailUrl } of results) {
                         await dump(zpid, results);
 
@@ -737,7 +735,8 @@ Apify.main(async () => {
                     }
 
                     if (shouldContinue) {
-                        for (const cat of ['cat1', 'cat2']) {
+                        const listingTypes = ['cat1', 'cat2']; // cat1 are agents listings, cat2 are other listings
+                        for (const cat of listingTypes) {
                             const result = await page.evaluate(
                                 queryRegionHomes,
                                 {
@@ -792,6 +791,8 @@ Apify.main(async () => {
                         ),
                     ]);
 
+                    totalResults = Math.max(results.length, totalResults);
+
                     if (!results?.length) {
                         session.retire();
                         if (totalCount > 0) {
@@ -808,18 +809,18 @@ Apify.main(async () => {
                             url: page.url(),
                         });
 
-                        // Extract home data from mapResults
-                        const thr = input.splitThreshold || 500;
+                        log.info(`Found ${results.length} results in current area`, qs.mapBounds);
 
-                        if (results.length >= thr) {
+                        // Extract home data from mapResults
+                        if (zpids.size < totalResults) {
                             if (input.maxLevel && (request.userData.splitCount || 0) >= input.maxLevel) {
                                 log.info('Over max level');
                             } else {
                                 // Split map and enqueue sub-rectangles
                                 const splitCount = (request.userData.splitCount || 0) + 1;
-                                const split = splitQueryState(qs);
+                                const splits = splitQueryState(qs);
 
-                                for (const searchQueryState of split) {
+                                for (const searchQueryState of splits) {
                                     if (isOverItems()) {
                                         break;
                                     }
@@ -850,11 +851,13 @@ Apify.main(async () => {
                             const interval = setInterval(extracted, 10000);
 
                             try {
-                                for (const { zpid, detailUrl } of results) {
+                                for (const { zpid, plid, lotId, detailUrl } of results) {
                                     await dump(zpid, results);
 
-                                    if (zpid) {
-                                        await processZpid(zpid, detailUrl);
+                                    const zpidValue = zpid || lotId || plid;
+
+                                    if (zpidValue && detailUrl) {
+                                        await processZpid(zpidValue, detailUrl);
 
                                         if (isOverItems()) {
                                             break; // optimize runtime
