@@ -15,7 +15,6 @@ const {
     getUrlData,
     extendFunction,
     translateQsToFilter,
-    makeInputBackwardsCompatible,
 } = fns;
 
 const { log, puppeteer, sleep } = Apify.utils;
@@ -35,6 +34,11 @@ Apify.main(async () => {
     // Check input
     if (!(input.search && input.search.trim().length > 0) && !input.startUrls && !input.zpids) {
         throw new Error('Either "search", "startUrls" or "zpids" attribute has to be set!');
+    }
+
+    if (input.startUrls && input.type) {
+        log.warning(`Input type "${input.type}" will be ignored as the value is derived from start url.
+        Check if your start urls match the desired home status.`);
     }
 
     const proxyConfig = await proxyConfiguration({
@@ -217,9 +221,7 @@ Apify.main(async () => {
         : false);
 
     const extendOutputFunction = await extendFunction({
-        map: async (data) => {
-            return getSimpleResult(data);
-        },
+        map: async (data) => getSimpleResult(data),
         filter: async ({ data }) => {
             if (isOverItems()) {
                 return false;
@@ -231,6 +233,11 @@ Apify.main(async () => {
 
             if (!minMaxDate.compare(data.datePosted) || zpids.has(`${data.zpid}`)) {
                 return false;
+            }
+
+            if (input.startUrls) {
+                // ignore input.type when it is set in start url
+                return true;
             }
 
             switch (input.type) {
@@ -533,6 +540,7 @@ Apify.main(async () => {
 
                         // now that we initialized, we can add the requests
                         for (const req of startUrls) {
+                            log.info(`Request: ${req.url}`);
                             await requestQueue.addRequest(req);
                         }
 
