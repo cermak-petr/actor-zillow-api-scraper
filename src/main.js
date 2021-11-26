@@ -851,13 +851,11 @@ Apify.main(async () => {
                             const interval = setInterval(extracted, 10000);
 
                             try {
-                                for (const { zpid, plid, lotId, detailUrl } of results) {
+                                for (const { zpid, detailUrl } of results) {
                                     await dump(zpid, results);
 
-                                    const zpidValue = zpid || lotId || plid;
-
-                                    if (zpidValue && detailUrl) {
-                                        await processZpid(zpidValue, detailUrl);
+                                    if (zpid) {
+                                        await processZpid(zpid, detailUrl);
 
                                         if (isOverItems()) {
                                             break; // optimize runtime
