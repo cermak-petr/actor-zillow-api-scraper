@@ -140,7 +140,7 @@ Apify.main(async () => {
 
     const zpids = new Set(await Apify.getValue('STATE'));
 
-    Apify.events.on('persistState', async () => {
+    Apify.events.on('migrating', async () => {
         await Apify.setValue('STATE', [...zpids.values()]);
     });
 
