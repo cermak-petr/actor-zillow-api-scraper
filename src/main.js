@@ -15,7 +15,6 @@ const {
     getUrlData,
     extendFunction,
     translateQsToFilter,
-    makeInputBackwardsCompatible,
 } = fns;
 
 const { log, puppeteer, sleep } = Apify.utils;
@@ -54,53 +53,44 @@ Apify.main(async () => {
         max: input.maxDate,
     });
 
-    // Toggle showing only a subset of result attriutes
+    // Toggle showing only a subset of result attributes
+
+    const simpleResult = {
+        address: true,
+        bedrooms: true,
+        bathrooms: true,
+        price: true,
+        yearBuilt: true,
+        longitude: true,
+        homeStatus: true,
+        latitude: true,
+        description: true,
+        livingArea: true,
+        currency: true,
+        hdpUrl: true,
+        hugePhotos: true,
+    };
+
     const getSimpleResult = createGetSimpleResult(
         input.simple
-            ? {
-                address: true,
-                bedrooms: true,
-                bathrooms: true,
-                price: true,
-                yearBuilt: true,
-                longitude: true,
-                homeStatus: true,
-                latitude: true,
-                description: true,
-                livingArea: true,
-                currency: true,
-                hdpUrl: true,
-                hugePhotos: true,
-            }
+            ? simpleResult
             : {
+                ...simpleResult,
                 datePosted: true,
                 isZillowOwned: true,
                 priceHistory: true,
                 zpid: true,
-                homeStatus: true,
-                address: true,
-                bedrooms: true,
-                bathrooms: true,
-                price: true,
-                yearBuilt: true,
                 isPremierBuilder: true,
-                longitude: true,
-                latitude: true,
-                description: true,
                 primaryPublicVideo: true,
                 tourViewCount: true,
                 postingContact: true,
                 unassistedShowing: true,
-                livingArea: true,
-                currency: true,
                 homeType: true,
                 comingSoonOnMarketDate: true,
                 timeZone: true,
-                hdpUrl: true,
                 newConstructionType: true,
                 moveInReady: true,
                 moveInCompletionDate: true,
-                hugePhotos: true,
                 lastSoldPrice: true,
                 contingentListingType: true,
                 zestimate: true,
@@ -154,9 +144,6 @@ Apify.main(async () => {
         await Apify.setValue('STATE', [...zpids.values()]);
     });
 
-    // TODO: temp hack to get around empty output. remove this after merge to master
-    makeInputBackwardsCompatible(input);
-
     const requestQueue = await Apify.openRequestQueue();
 
     /**
@@ -178,6 +165,11 @@ Apify.main(async () => {
     }
 
     if (input.startUrls && input.startUrls.length) {
+        if (input.type) {
+            log.warning(`Input type "${input.type}" will be ignored as the value is derived from start url.
+            Check if your start urls match the desired home status.`);
+        }
+
         const requestList = await Apify.openRequestList('STARTURLS', input.startUrls);
 
         let req;
@@ -213,7 +205,7 @@ Apify.main(async () => {
     const savedQueryId = await Apify.getValue('QUERY');
 
     if (savedQueryId?.queryId && savedQueryId?.clientVersion) {
-        queryZpid = createQueryZpid(savedQueryId.queryId, savedQueryId.clientVersion, []);
+        queryZpid = createQueryZpid(savedQueryId.queryId, savedQueryId.clientVersion);
     } else {
         await requestQueue.addRequest({
             url: INITIAL_URL,
@@ -229,9 +221,7 @@ Apify.main(async () => {
         : false);
 
     const extendOutputFunction = await extendFunction({
-        map: async (data) => {
-            return getSimpleResult(data);
-        },
+        map: async (data) => getSimpleResult(data),
         filter: async ({ data }) => {
             if (isOverItems()) {
                 return false;
@@ -243,6 +233,11 @@ Apify.main(async () => {
 
             if (!minMaxDate.compare(data.datePosted) || zpids.has(`${data.zpid}`)) {
                 return false;
+            }
+
+            if (input.startUrls) {
+                // ignore input.type when it is set in start url
+                return true;
             }
 
             switch (input.type) {
@@ -448,6 +443,9 @@ Apify.main(async () => {
         handlePageFunction: async ({ page, request, crawler: { autoscaledPool }, session, response, proxyInfo }) => {
             if (!response || isOverItems()) {
                 await page.close();
+                if (!response) {
+                    throw new Error('No response from page');
+                }
                 return;
             }
 
@@ -701,6 +699,7 @@ Apify.main(async () => {
                 // Get initial searchState
                 const queryStates = [];
                 let totalCount = 0;
+                let totalResults = 0;
                 let shouldContinue = true;
 
                 try {
@@ -736,7 +735,8 @@ Apify.main(async () => {
                     }
 
                     if (shouldContinue) {
-                        for (const cat of ['cat1', 'cat2']) {
+                        const listingTypes = ['cat1', 'cat2']; // cat1 are agents listings, cat2 are other listings
+                        for (const cat of listingTypes) {
                             const result = await page.evaluate(
                                 queryRegionHomes,
                                 {
@@ -791,6 +791,8 @@ Apify.main(async () => {
                         ),
                     ]);
 
+                    totalResults = Math.max(results.length, totalResults);
+
                     if (!results?.length) {
                         session.retire();
                         if (totalCount > 0) {
@@ -798,7 +800,7 @@ Apify.main(async () => {
                             throw new Error(`No map results but result count is ${totalCount}`);
                         } else {
                             log.debug('Really zero results');
-                            return;
+                            throw new Error(`Zero results found. Retry request.`);
                         }
                     }
 
@@ -807,18 +809,18 @@ Apify.main(async () => {
                             url: page.url(),
                         });
 
-                        // Extract home data from mapResults
-                        const thr = input.splitThreshold || 500;
+                        log.info(`Found ${results.length} results in current area`, qs.mapBounds);
 
-                        if (results.length >= thr) {
+                        // Extract home data from mapResults
+                        if (zpids.size < totalResults) {
                             if (input.maxLevel && (request.userData.splitCount || 0) >= input.maxLevel) {
                                 log.info('Over max level');
                             } else {
                                 // Split map and enqueue sub-rectangles
                                 const splitCount = (request.userData.splitCount || 0) + 1;
-                                const split = splitQueryState(qs);
+                                const splits = splitQueryState(qs);
 
-                                for (const searchQueryState of split) {
+                                for (const searchQueryState of splits) {
                                     if (isOverItems()) {
                                         break;
                                     }
