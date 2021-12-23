@@ -9,12 +9,11 @@ const {
     createQueryZpid,
     proxyConfiguration,
     interceptQueryId,
-    queryRegionHomes,
     splitQueryState,
     quickHash,
     getUrlData,
     extendFunction,
-    translateQsToFilter,
+    extractQueryStates,
 } = fns;
 
 const { log, puppeteer, sleep } = Apify.utils;
@@ -40,7 +39,6 @@ Apify.main(async () => {
         proxyConfig: {
             ...input.proxyConfiguration,
         },
-        hint: ['RESIDENTIAL'],
     });
 
     if (proxyConfig?.groups?.includes('RESIDENTIAL')) {
@@ -699,7 +697,6 @@ Apify.main(async () => {
                 // Get initial searchState
                 const queryStates = [];
                 let totalCount = 0;
-                let totalResults = 0;
                 let shouldContinue = true;
 
                 try {
@@ -735,30 +732,10 @@ Apify.main(async () => {
                     }
 
                     if (shouldContinue) {
-                        const listingTypes = ['cat1', 'cat2']; // cat1 are agents listings, cat2 are other listings
-                        for (const cat of listingTypes) {
-                            const result = await page.evaluate(
-                                queryRegionHomes,
-                                {
-                                    qs: translateQsToFilter(request.userData.searchQueryState || pageQs.queryState),
-                                    // use a special type so the query state that comes from the url
-                                    // doesn't get erased
-                                    type: request.userData.searchQueryState ? 'qs' : input.type,
-                                    cat,
-                                },
-                            );
-
-                            log.debug('query', result.qs);
-
-                            const searchState = JSON.parse(result.body);
-
-                            queryStates.push({
-                                qs: result.qs,
-                                searchState,
-                            });
-
-                            totalCount += searchState?.categoryTotals?.[cat]?.totalResultCount ?? 0;
-                        }
+                        const extractedQueryStates = await extractQueryStates(request, input.type, pageQs);
+                        queryStates.push(...extractedQueryStates.states);
+                        totalCount += extractedQueryStates.totalCount;
+                        log.info(`Found ${totalCount} results on the current page.`);
                     }
                 } catch (e) {
                     log.debug(e);
@@ -791,9 +768,10 @@ Apify.main(async () => {
                         ),
                     ]);
 
-                    totalResults = Math.max(results.length, totalResults);
+                    log.info(`Results extracted from searchState: ${results.length}`);
 
                     if (!results?.length) {
+                        log.info(`No results, retiring session.`);
                         session.retire();
                         if (totalCount > 0) {
                             await Apify.setValue(`SEARCHSTATE-${Math.random()}`, queryStates);
@@ -812,7 +790,9 @@ Apify.main(async () => {
                         log.info(`Found ${results.length} results in current area`, qs.mapBounds);
 
                         // Extract home data from mapResults
-                        if (zpids.size < totalResults) {
+                        const thr = input.splitThreshold || 500;
+
+                        if (results.length >= thr) {
                             if (input.maxLevel && (request.userData.splitCount || 0) >= input.maxLevel) {
                                 log.info('Over max level');
                             } else {

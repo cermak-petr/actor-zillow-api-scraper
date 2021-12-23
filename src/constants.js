@@ -1,5 +1,3 @@
-const { platform } = require('os');
-
 /**
  * Request labels
  */

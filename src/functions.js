@@ -5,6 +5,7 @@ const Puppeteer = require('puppeteer'); // eslint-disable-line no-unused-vars
 const { createHash } = require('crypto');
 const vm = require('vm');
 const { TYPES, LABELS } = require('./constants');
+const { filter } = require('lodash');
 
 const { sleep, log, requestAsBrowser } = Apify.utils;
 
@@ -82,7 +83,7 @@ const mappings = {
  */
 const translateQsToFilter = (qs) => {
     if (!qs) {
-        return {};
+        return { filterState: {} };
     }
 
     qs.filterState = Object.entries(qs.filterState).reduce((out, [key, value]) => {
@@ -269,6 +270,61 @@ const splitQueryState = (queryState) => {
 };
 
 /**
+ * @param {{ filterState: Record<string, any> }} qs
+ * @param {keyof TYPES} type
+ * @returns filter states
+ */
+const getQueryFilterStates = (qs, type) => {
+    /**
+     * Filter state must follow the exact format corresponding
+     * to the Zillow API. False values cannot be ommited and
+     * the exact number of query parameters has to be preserved.
+     * Otherwise the request returns both list and map results empty.
+     */
+
+    const rentSoldCommonFilters = {
+        isAllHomes: { value: true },
+        isForSaleByAgent: { value: false },
+        isForSaleByOwner: { value: false },
+        isNewConstruction: { value: false },
+        isComingSoon: { value: false },
+        isAuction: { value: false },
+        isForSaleForeclosure: { value: false },
+    };
+
+    const typeFilters = {
+        sale: [{
+            isAllHomes: { value: true },
+        }],
+        fsbo: [{
+            isAllHomes: { value: true },
+            isForSaleByOwner: { value: true },
+        }],
+        rent: [{
+            isForRent: { value: true },
+            ...rentSoldCommonFilters,
+        }],
+        sold: [{
+            isRecentlySold: { value: true },
+            ...rentSoldCommonFilters,
+        }],
+        /** @type {Array<any>} */
+        all: [],
+        /** qs is processed in translateQsToFilter (it comes from request.userData.searchQueryState), not from input.type) */
+        qs: [qs.filterState],
+    };
+
+    /**
+     * Zillow doesn't provide 'all' option at the moment,
+     * for-sale and for-rent listings have different base url.
+     * To extract all items, separate requests need to be sent.
+     */
+    typeFilters.all.push(...typeFilters.sale, ...typeFilters.rent); // TODO: should typeFilters.sold be included in typeFilters.all?
+
+    return typeFilters[type];
+};
+
+/**
  * Make API query for all ZPIDs in map reqion
  * @param {{
  *  qs: { filterState: any },
@@ -276,60 +332,7 @@ const splitQueryState = (queryState) => {
  *  cat: 'cat1' | 'cat2'
  * }} queryState
  */
-const queryRegionHomes = async ({ qs, type, cat = 'cat1' }) => {
-    if (type === 'rent') {
-        qs.filterState = {
-            isForSaleByAgent: { value: false },
-            isForSaleByOwner: { value: false },
-            isNewConstruction: { value: false },
-            isForSaleForeclosure: { value: false },
-            isComingSoon: { value: false },
-            isAuction: { value: false },
-            isPreMarketForeclosure: { value: false },
-            isPreMarketPreForeclosure: { value: false },
-            isForRent: { value: true },
-        };
-    } else if (type === 'fsbo') {
-        qs.filterState = {
-            isForSaleByAgent: { value: false },
-            isForSaleByOwner: { value: true },
-            isNewConstruction: { value: false },
-            isForSaleForeclosure: { value: false },
-            isComingSoon: { value: false },
-            isAuction: { value: false },
-            isPreMarketForeclosure: { value: false },
-            isPreMarketPreForeclosure: { value: false },
-            isForRent: { value: false },
-        };
-    } else if (type === 'sold') {
-        qs.filterState = {
-            sortSelection: { value: 'globalrelevanceex' },
-            isAllHomes: { value: true },
-            isRecentlySold: { value: true },
-            isForSaleByAgent: { value: false },
-            isForSaleByOwner: { value: false },
-            isNewConstruction: { value: false },
-            isComingSoon: { value: false },
-            isAuction: { value: false },
-            isForSaleForeclosure: { value: false },
-            isPreMarketForeclosure: { value: false },
-            isPreMarketPreForeclosure: { value: false },
-        };
-    } else if (type === 'all') {
-        qs.filterState = {
-            isPreMarketForeclosure: { value: true },
-            isForSaleForeclosure: { value: true },
-            sortSelection: { value: 'globalrelevanceex' },
-            isAuction: { value: true },
-            isNewConstruction: { value: true },
-            isRecentlySold: { value: true },
-            isForSaleByOwner: { value: true },
-            isComingSoon: { value: true },
-            isPreMarketPreForeclosure: { value: true },
-            isForSaleByAgent: { value: true },
-        };
-    }
-
+const queryRegionHomes = async ({ qs, cat = 'cat1' }) => {
     const wants = {
         [cat]: ['listResults', 'mapResults'],
     };
@@ -355,6 +358,61 @@ const queryRegionHomes = async ({ qs, type, cat = 'cat1' }) => {
         body: await (await resp.blob()).text(),
         qs,
     };
+};
+
+/**
+ *
+ * @param {Apify.Request} request
+ * @param {keyof TYPES} inputType
+ * @param {any} pageQs
+ * @returns query states with total count
+ */
+const extractQueryStates = async (request, inputType, pageQs) => {
+    /** @type { { states: Array<any>, totalCount: Number } } */
+    const queryStates = {
+        states: [],
+        totalCount: 0,
+    };
+
+    const type = request.userData.searchQueryState ? 'qs' : inputType;
+    const listingTypes = ['cat1', 'cat2']; // cat1 = agents listings, cat2 = other listings
+    const qs = translateQsToFilter(request.userData.searchQueryState || pageQs.queryState);
+    const filterStates = getQueryFilterStates(qs, type);
+
+    for (const cat of listingTypes) {
+        const wants = {
+            [cat]: ['listResults', 'mapResults'],
+        };
+
+        for (const filterState of filterStates) {
+            qs.filterState = filterState;
+            const url = `https://www.zillow.com/search/GetSearchPageState.htm?searchQueryState=${JSON.stringify(qs)}&wants=${JSON.stringify(wants)}&requestId=${Math.floor(Math.random() * 70) + 1}`;
+            log.info(`Fetching url: ${url}`);
+
+            const result = await Apify.utils.requestAsBrowser({ url });
+
+            // TODO: test performance of Apify.utils.requestAsBrowser vs fetch inside page.evaluate function
+
+            // const result = await page.evaluate(
+            //     queryRegionHomes,
+            //     {
+            //         qs: translateQsToFilter(request.userData.searchQueryState || pageQs.queryState),
+            //         cat,
+            //     },
+            // );
+
+            log.debug('query', result.qs);
+
+            const searchState = JSON.parse(result.body);
+            queryStates.states.push({ qs, searchState });
+
+            await Apify.setValue('SEARCH_STATE', searchState);
+
+            queryStates.totalCount += searchState?.categoryTotals?.[cat]?.totalResultCount ?? 0;
+        }
+    }
+
+    return queryStates;
 };
 
 /**
@@ -672,7 +730,7 @@ module.exports = {
     createGetSimpleResult,
     createQueryZpid,
     interceptQueryId,
-    queryRegionHomes,
+    extractQueryStates,
     splitQueryState,
     extendFunction,
     proxyConfiguration,
@@ -681,6 +739,5 @@ module.exports = {
     makeInputBackwardsCompatible,
     minMaxDates,
     patchLog,
-    translateQsToFilter,
     changeHandlePageTimeout,
 };
