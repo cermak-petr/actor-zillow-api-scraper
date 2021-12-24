@@ -2,19 +2,26 @@ const Apify = require('apify');
 const HeaderGenerator = require('header-generator');
 const _ = require('lodash');
 const { LABELS, TYPES, INITIAL_URL } = require('./constants');
+const { getExtendOutputFunction } = require('./extend-functions');
 const fns = require('./functions');
+const handlePageFns = require('./page-handler');
 
 const {
     createGetSimpleResult,
     createQueryZpid,
     proxyConfiguration,
-    interceptQueryId,
     splitQueryState,
     quickHash,
     getUrlData,
     extendFunction,
     extractQueryStates,
 } = fns;
+
+const {
+    PageHandler,
+    handleInitialPage,
+    handleDetailPage,
+} = handlePageFns;
 
 const { log, puppeteer, sleep } = Apify.utils;
 
@@ -138,6 +145,15 @@ Apify.main(async () => {
 
     const zpids = new Set(await Apify.getValue('STATE'));
 
+    // should store biggest discovered zpids count (typically from the first loaded search page before map splitting)
+    let maxZpidsFound = 0;
+
+    const globalContext = {
+        zpids,
+        input,
+        maxZpidsFound,
+    };
+
     Apify.events.on('migrating', async () => {
         await Apify.setValue('STATE', [...zpids.values()]);
     });
@@ -218,59 +234,7 @@ Apify.main(async () => {
         ? (zpids.size + extra) >= input.maxItems
         : false);
 
-    const extendOutputFunction = await extendFunction({
-        map: async (data) => getSimpleResult(data),
-        filter: async ({ data }) => {
-            if (isOverItems()) {
-                return false;
-            }
-
-            if (!_.get(data, 'zpid')) {
-                return false;
-            }
-
-            if (!minMaxDate.compare(data.datePosted) || zpids.has(`${data.zpid}`)) {
-                return false;
-            }
-
-            if (input.startUrls) {
-                // ignore input.type when it is set in start url
-                return true;
-            }
-
-            switch (input.type) {
-                case 'sale':
-                    return data.homeStatus === 'FOR_SALE';
-                case 'fsbo':
-                    return data.homeStatus === 'FOR_SALE' && data.keystoneHomeStatus === 'ForSaleByOwner';
-                case 'rent':
-                    return data.homeStatus === 'FOR_RENT';
-                case 'sold':
-                    return data.homeStatus?.includes('SOLD');
-                case 'all':
-                default:
-                    return true;
-            }
-        },
-        output: async (output, { data }) => {
-            if (data.zpid && !isOverItems()) {
-                zpids.add(`${data.zpid}`);
-                await Apify.pushData(output);
-            }
-        },
-        input,
-        key: 'extendOutputFunction',
-        helpers: {
-            getUrlData,
-            getSimpleResult,
-            _,
-            zpids,
-            minMaxDate,
-            TYPES,
-            fns,
-            LABELS,
-        },
-    });
+    const extendOutputFunction = await getExtendOutputFunction(globalContext, minMaxDate, getSimpleResult);
 
     const extendScraperFunction = await extendFunction({
         output: async () => {}, // no-op
@@ -294,12 +258,6 @@ Apify.main(async () => {
             minMaxDate,
         },
     });
-
-    const dump = Apify.utils.log.LEVELS.DEBUG === Apify.utils.log.getLevel() ? async (zpid, data) => {
-        if (zpid != +zpid) {
-            await Apify.setValue(`DUMP-${Math.random()}`, data);
-        }
-    } : () => {};
 
     await extendScraperFunction(undefined, {
         label: 'SETUP',
@@ -430,7 +388,7 @@ Apify.main(async () => {
                     fns.changeHandlePageTimeout(crawler, input.handlePageTimeoutSecs || 3600);
                 }
             }],
-            postPageCloseHooks: [async (pageId, browserController) => {
+            postPageCloseHooks: [async (_pageId, browserController) => {
                 if (!browserController?.launchContext?.session?.isUsable()) {
                     log.debug('Session is not usable');
                     await browserController.close();
@@ -453,416 +411,31 @@ Apify.main(async () => {
                 throw new Error('Captcha found, retrying...');
             }
 
-            let anyErrors = false;
-
-            /**
-             * Extract home data by ZPID
-             * @param {string} zpid
-             * @param {string} detailUrl
-             */
-            const processZpid = async (zpid, detailUrl) => {
-                if (isOverItems()) {
-                    return;
-                }
-
-                try {
-                    if (!zpid) {
-                        throw new Error(`Zpid not string or number`);
-                    }
-
-                    if (+zpid != zpid) {
-                        throw new Error('Invalid non-numeric zpid');
-                    }
-
-                    if (zpids.has(`${zpid}`)) {
-                        return;
-                    }
-
-                    if (!session.isUsable()) {
-                        throw new Error('Not trying to retrieve data');
-                    }
-
-                    log.debug(`Extracting ${zpid}`);
-
-                    await extendOutputFunction(
-                        JSON.parse(await queryZpid(page, zpid)).data.property,
-                        {
-                            request,
-                            page,
-                            zpid,
-                        },
-                    );
-                } catch (e) {
-                    anyErrors = true;
-                    session.markBad();
-                    log.debug('processZpid', { error: e });
-
-                    if (isOverItems()) {
-                        return;
-                    }
-
-                    // add as a separate detail for retrying
-                    await requestQueue.addRequest({
-                        url: new URL(detailUrl || `/homedetails/${zpid}_zpid/`, 'https://www.zillow.com').toString(),
-                        userData: {
-                            label: LABELS.DETAIL,
-                            zpid: +zpid,
-                        },
-                    }, { forefront: true });
-                } finally {
-                    await sleep(100);
-                }
-            };
+            const context = { page, request, crawler: { requestQueue, autoscaledPool }, session, response, proxyInfo };
+            const pageHandler = new PageHandler(context, globalContext, extendOutputFunction);
 
             const { label } = request.userData;
 
             if (label === LABELS.INITIAL || !queryZpid) {
-                try {
-                    log.info('Trying to get queryId...');
-
-                    const { queryId, clientVersion } = await interceptQueryId(page, proxyInfo);
-
-                    if (!queryId || !clientVersion) {
-                        throw new Error('queryId unavailable');
-                    }
-
-                    if (!queryZpid) {
-                        // avoid a racing condition here because of interceptQueryId being stuck forever or for a long time
-                        log.debug('Intercepted queryId', { queryId, clientVersion });
-
-                        queryZpid = createQueryZpid(queryId, clientVersion);
-
-                        await Apify.setValue('QUERY', { queryId, clientVersion });
-
-                        autoscaledPool.maxConcurrency = 10;
-
-                        // now that we initialized, we can add the requests
-                        for (const req of startUrls) {
-                            await requestQueue.addRequest(req);
-                        }
-
-                        log.info('Got queryId, continuing...');
-                    }
-                } catch (e) {
-                    session.retire();
-                    throw e;
-                }
+                queryZpid = await pageHandler.handleInitialPage(queryZpid, startUrls);
             } else if (label === LABELS.DETAIL) {
-                if (isOverItems()) {
-                    return;
-                }
-
-                log.debug(`Scraping ${page.url()}`);
-
-                if (request.url.startsWith('/b/') || !+request.userData.zpid) {
-                    const nextData = await page.$eval('[id="__NEXT_DATA__"]', (s) => JSON.parse(s.innerHTML));
-
-                    if (!nextData) {
-                        throw new Error('Missing data');
-                    }
-
-                    // legacy layout, need re-enqueue
-                    const zpid = _.get(nextData, 'props.initialData.building.zpid');
-
-                    if (zpid) {
-                        const url = `https://www.zillow.com/homedetails/${zpid}_zpid/`;
-
-                        const rq = await requestQueue.addRequest({
-                            url,
-                            userData: {
-                                label: LABELS.DETAIL,
-                                zpid: +zpid,
-                            },
-                        }, { forefront: true });
-
-                        if (!rq.wasAlreadyPresent) {
-                            log.info(`Re-enqueueing ${url}`);
-                        }
-
-                        return;
-                    }
-
-                    throw new Error('ZPID not found in page');
-                }
-
-                const scripts = await page.$x('//script[contains(., "RenderQuery") and contains(., "apiCache")]');
-
-                // await Apify.setValue(`${request.userData.zpid}--${Math.random()}`, await page.content(), { contentType: 'text/html' });
-
-                if (!scripts.length) {
-                    session.retire();
-                    throw new Error('Failed to load preloaded data scripts');
-                }
-
-                log.info(`Extracting data from ${request.url}`);
-                let noScriptsFound = true;
-
-                for (const script of scripts) {
-                    try {
-                        const loaded = JSON.parse(JSON.parse(await script.evaluate((s) => s.innerHTML)).apiCache);
-
-                        for (const key in loaded) { // eslint-disable-line
-                            if (key.includes('RenderQuery') && loaded[key].property) {
-                                await extendOutputFunction(loaded[key].property, {
-                                    request,
-                                    page,
-                                    zpid: request.userData.zpid,
-                                });
-
-                                noScriptsFound = false;
-                                break;
-                            }
-                        }
-                    } catch (e) {
-                        if (e.message.includes('Cannot read property')) {
-                            // this is a faulty extend output function
-                            log.error(`Your Extend Output Function errored:\n\n    ${e}\n\n`, { url: page.url() });
-                        }
-                        log.debug(e);
-                    }
-                }
-
-                if (noScriptsFound) {
-                    throw new Error('Failed to load preloaded data from page');
-                }
+                await pageHandler.handleDetailPage();
             } else if (label === LABELS.ZPIDS) {
-                // Extract all homes by input ZPIDs
-                log.info(`Scraping ${input.zpids.length} zpids`);
-
-                for (const zpid of input.zpids) {
-                    await processZpid(zpid, '');
-
-                    if (isOverItems()) {
-                        break;
-                    }
-                }
+                await pageHandler.handleZpidsPage(queryZpid);
             } else if (label === LABELS.QUERY || label === LABELS.SEARCH) {
-                if (label === LABELS.SEARCH) {
-                    log.info(`Searching for "${request.userData.term}"`);
-
-                    const text = '#search-box-input';
-                    const btn = 'button#search-icon';
-
-                    await page.waitForRequest((req) => req.url().includes('/login'));
-
-                    await Promise.all([
-                        page.waitForSelector(text),
-                        page.waitForSelector(btn),
-                    ]);
-
-                    await page.focus(text);
-                    await Promise.all([
-                        page.waitForResponse((res) => res.url().includes('suggestions')),
-                        page.type(text, request.userData.term, { delay: 150 }),
-                    ]);
-
-                    try {
-                        await Promise.all([
-                            page.waitForNavigation({ timeout: 10000 }),
-                            page.tap(btn),
-                        ]);
-                    } catch (e) {
-                        log.debug(e.message);
-
-                        const interstitial = await page.$$('#interstitial-title');
-                        if (!interstitial.length) {
-                            session.retire();
-                            throw new Error('Search didn\'t redirect, retrying...');
-                        } else {
-                            const skip = await page.$x('//button[contains(., "Skip")]');
-
-                            try {
-                                await Promise.all([
-                                    page.waitForNavigation({ timeout: 25000 }),
-                                    skip[0].click(),
-                                ]);
-                            } catch (e) {
-                                log.debug(`Insterstitial`, { message: e.message });
-                                throw new Error('Search page didn\'t redirect in time');
-                            }
-                        }
-                    }
-
-                    if ((!/(\/homes\/|_rb)/.test(page.url()) || page.url().includes('/_rb/') || page.url().includes('_zpid')) && !page.url().includes('searchQueryState')) {
-                        session.retire();
-                        throw new Error(`Unexpected page address ${page.url()}, use a better keyword for searching or proper state or city name. Will retry...`);
-                    }
-
-                    if (await page.$('.captcha-container')) {
-                        session.retire();
-                        throw new Error('Captcha found when searching, retrying...');
-                    }
-                }
-
-                // Get initial searchState
-                const queryStates = [];
-                let totalCount = 0;
-                let shouldContinue = true;
-
-                try {
-                    const pageQs = await page.evaluate(() => {
-                        try {
-                            return JSON.parse(
-                                document.querySelector(
-                                    'script[data-zrr-shared-data-key="mobileSearchPageStore"]',
-                                ).innerHTML.slice(4, -3),
-                            );
-                        } catch (e) {
-                            return {};
-                        }
-                    });
-
-                    const results = [
-                        ..._.get(pageQs, 'cat1.searchResults.listResults', []),
-                        ..._.get(pageQs, 'cat1.searchResults.mapResults', []),
-                        ..._.get(pageQs, 'cat2.searchResults.listResults', []),
-                        ..._.get(pageQs, 'cat2.searchResults.mapResults', []),
-                    ];
-
-                    for (const { zpid, detailUrl } of results) {
-                        await dump(zpid, results);
-
-                        if (zpid) {
-                            if (isOverItems()) {
-                                shouldContinue = false;
-                                break;
-                            }
-                            await processZpid(zpid, detailUrl);
-                        }
-                    }
-
-                    if (shouldContinue) {
-                        const extractedQueryStates = await extractQueryStates(request, input.type, pageQs);
-                        queryStates.push(...extractedQueryStates.states);
-                        totalCount += extractedQueryStates.totalCount;
-                        log.info(`Found ${totalCount} results on the current page.`);
-                    }
-                } catch (e) {
-                    log.debug(e);
-                }
-
-                log.debug('searchState', { queryStates });
-
-                if (shouldContinue && queryStates?.length) {
-                    // Check mapResults
-                    const results = queryStates.flatMap(({ searchState }) => [
-                        ..._.get(
-                            searchState,
-                            'cat1.searchResults.mapResults',
-                            [],
-                        ),
-                        ..._.get(
-                            searchState,
-                            'cat1.searchResults.listResults',
-                            [],
-                        ),
-                        ..._.get(
-                            searchState,
-                            'cat2.searchResults.mapResults',
-                            [],
-                        ),
-                        ..._.get(
-                            searchState,
-                            'cat2.searchResults.listResults',
-                            [],
-                        ),
-                    ]);
-
-                    log.info(`Results extracted from searchState: ${results.length}`);
-
-                    if (!results?.length) {
-                        log.info(`No results, retiring session.`);
-                        session.retire();
-                        if (totalCount > 0) {
-                            await Apify.setValue(`SEARCHSTATE-${Math.random()}`, queryStates);
-                            throw new Error(`No map results but result count is ${totalCount}`);
-                        } else {
-                            log.debug('Really zero results');
-                            throw new Error(`Zero results found. Retry request.`);
-                        }
-                    }
-
-                    for (const { qs } of queryStates) {
-                        log.info(`Searching homes at ${JSON.stringify(qs.mapBounds)}`, {
-                            url: page.url(),
-                        });
-
-                        log.info(`Found ${results.length} results in current area`, qs.mapBounds);
-
-                        // Extract home data from mapResults
-                        const thr = input.splitThreshold || 500;
-
-                        if (results.length >= thr) {
-                            if (input.maxLevel && (request.userData.splitCount || 0) >= input.maxLevel) {
-                                log.info('Over max level');
-                            } else {
-                                // Split map and enqueue sub-rectangles
-                                const splitCount = (request.userData.splitCount || 0) + 1;
-                                const splits = splitQueryState(qs);
-
-                                for (const searchQueryState of splits) {
-                                    if (isOverItems()) {
-                                        break;
-                                    }
-
-                                    const uniqueKey = quickHash(`${request.url}${splitCount}${JSON.stringify(searchQueryState)}`);
-                                    log.debug('queryState', { searchQueryState, uniqueKey });
-                                    const url = new URL(request.url);
-
-                                    url.searchParams.set('searchQueryState', JSON.stringify(searchQueryState));
-
-                                    await requestQueue.addRequest({
-                                        url: url.toString(),
-                                        userData: {
-                                            searchQueryState,
-                                            label: LABELS.QUERY,
-                                            splitCount,
-                                        },
-                                        uniqueKey,
-                                    });
-                                }
-                            }
-                        }
-
-                        if (results.length > 0) {
-                            const extracted = () => {
-                                log.info(`Extracted total ${zpids.size}`);
-                            };
-                            const interval = setInterval(extracted, 10000);
-
-                            try {
-                                for (const { zpid, detailUrl } of results) {
-                                    await dump(zpid, results);
-
-                                    if (zpid) {
-                                        await processZpid(zpid, detailUrl);
-
-                                        if (isOverItems()) {
-                                            break; // optimize runtime
-                                        }
-                                    }
-                                }
-                            } finally {
-                                if (!anyErrors) {
-                                    extracted();
-                                }
-                                clearInterval(interval);
-                            }
-                        }
-                    }
-                }
+                await pageHandler.handleQueryAndSearchPage(label, queryZpid);
             }
 
             await extendScraperFunction(undefined, {
                 page,
                 request,
                 session,
-                processZpid,
+                processZpid: pageHandler.processZpid,
                 queryZpid,
                 label: 'HANDLE',
             });
 
-            if (anyErrors) {
+            if (pageHandler.foundAnyErrors()) {
                 session.retire();
                 throw new Error('Retiring session and browser...');
             }

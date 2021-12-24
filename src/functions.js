@@ -1,13 +1,11 @@
 const Apify = require('apify');
 const moment = require('moment');
-const _ = require('lodash');
 const Puppeteer = require('puppeteer'); // eslint-disable-line no-unused-vars
 const { createHash } = require('crypto');
 const vm = require('vm');
-const { TYPES, LABELS } = require('./constants');
-const { filter } = require('lodash');
+const { LABELS } = require('./constants');
 
-const { sleep, log, requestAsBrowser } = Apify.utils;
+const { log, requestAsBrowser } = Apify.utils;
 
 const mappings = {
     att: 'keywords',
@@ -360,6 +358,8 @@ const queryRegionHomes = async ({ qs, cat = 'cat1' }) => {
     };
 };
 
+
+
 /**
  *
  * @param {Apify.Request} request
@@ -367,7 +367,7 @@ const queryRegionHomes = async ({ qs, cat = 'cat1' }) => {
  * @param {any} pageQs
  * @returns query states with total count
  */
-const extractQueryStates = async (request, inputType, pageQs) => {
+const extractQueryStates = async (request, inputType, page, pageQs, paginationPage = 1) => {
     /** @type { { states: Array<any>, totalCount: Number } } */
     const queryStates = {
         states: [],
@@ -375,10 +375,12 @@ const extractQueryStates = async (request, inputType, pageQs) => {
     };
 
     const type = request.userData.searchQueryState ? 'qs' : inputType;
-    const listingTypes = ['cat1', 'cat2']; // cat1 = agents listings, cat2 = other listings
     const qs = translateQsToFilter(request.userData.searchQueryState || pageQs.queryState);
+    qs.pagination = { currentPage: paginationPage };
+
     const filterStates = getQueryFilterStates(qs, type);
 
+    const listingTypes = ['cat1', 'cat2']; // cat1 = agents listings, cat2 = other listings
     for (const cat of listingTypes) {
         const wants = {
             [cat]: ['listResults', 'mapResults'],
@@ -389,17 +391,18 @@ const extractQueryStates = async (request, inputType, pageQs) => {
             const url = `https://www.zillow.com/search/GetSearchPageState.htm?searchQueryState=${JSON.stringify(qs)}&wants=${JSON.stringify(wants)}&requestId=${Math.floor(Math.random() * 70) + 1}`;
             log.info(`Fetching url: ${url}`);
 
-            const result = await Apify.utils.requestAsBrowser({ url });
+            // const result = await Apify.utils.requestAsBrowser({ url });
 
             // TODO: test performance of Apify.utils.requestAsBrowser vs fetch inside page.evaluate function
+            // (page.evaluate option seems more blocking resistent)
 
-            // const result = await page.evaluate(
-            //     queryRegionHomes,
-            //     {
-            //         qs: translateQsToFilter(request.userData.searchQueryState || pageQs.queryState),
-            //         cat,
-            //     },
-            // );
+            const result = await page.evaluate(
+                queryRegionHomes,
+                {
+                    qs: translateQsToFilter(request.userData.searchQueryState || pageQs.queryState),
+                    cat,
+                },
+            );
 
             log.debug('query', result.qs);
 
@@ -726,6 +729,18 @@ const patchLog = (crawler) => {
     };
 };
 
+/**
+ * @param {{
+ *  zpids: Set<any>,
+ *  input: { maxItems: Number},
+ * }} globalContext
+ * @param {Number} extra
+ * @returns is over items bool result
+ */
+const isOverItems = ({ zpids, input }, extra = 0) => (typeof input.maxItems === 'number' && input.maxItems > 0
+    ? (zpids.size + extra) >= input.maxItems
+    : false);
+
 module.exports = {
     createGetSimpleResult,
     createQueryZpid,
@@ -740,4 +755,5 @@ module.exports = {
     minMaxDates,
     patchLog,
     changeHandlePageTimeout,
+    isOverItems,
 };
