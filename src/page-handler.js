@@ -597,7 +597,7 @@ class PageHandler {
 
             url.searchParams.set('searchQueryState', JSON.stringify(searchQueryState));
 
-            log.info(`Enqueuing map split request: ${url.toString()}`);
+            log.debug(`Enqueuing map split request: ${url.toString()}`);
             await requestQueue.addRequest({
                 url: url.toString(),
                 userData: {
