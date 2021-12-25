@@ -1,29 +1,18 @@
 const Apify = require('apify');
-const HeaderGenerator = require('header-generator');
 const _ = require('lodash');
-const { LABELS, TYPES, INITIAL_URL } = require('./constants');
-const { getExtendOutputFunction } = require('./extend-functions');
+const { LABELS, INITIAL_URL, URL_PATTERNS_TO_BLOCK } = require('./constants');
+const { PageHandler } = require('./page-handler');
+const { getExtendOutputFunction, getSimpleResultFunction, validateInput, initializeMinMaxDate, getInitializedStartUrls, getInitilizedHeaderGenerator } = require('./initialization');
 const fns = require('./functions');
-const handlePageFns = require('./page-handler');
 
 const {
-    createGetSimpleResult,
     createQueryZpid,
     proxyConfiguration,
-    splitQueryState,
-    quickHash,
     getUrlData,
     extendFunction,
-    extractQueryStates,
 } = fns;
 
-const {
-    PageHandler,
-    handleInitialPage,
-    handleDetailPage,
-} = handlePageFns;
-
-const { log, puppeteer, sleep } = Apify.utils;
+const { log, puppeteer } = Apify.utils;
 
 Apify.main(async () => {
     /**
@@ -37,10 +26,7 @@ Apify.main(async () => {
 
     const isDebug = input.debugLog === true;
 
-    // Check input
-    if (!(input.search && input.search.trim().length > 0) && !input.startUrls && !input.zpids) {
-        throw new Error('Either "search", "startUrls" or "zpids" attribute has to be set!');
-    }
+    validateInput(input);
 
     const proxyConfig = await proxyConfiguration({
         proxyConfig: {
@@ -52,106 +38,18 @@ Apify.main(async () => {
         proxyConfig.countryCode = 'US';
     }
 
-    // Initialize minimum time
-    const minMaxDate = fns.minMaxDates({
-        min: input.minDate,
-        max: input.maxDate,
-    });
+    const minMaxDate = initializeMinMaxDate(input);
 
-    // Toggle showing only a subset of result attributes
+    const getSimpleResult = getSimpleResultFunction(input);
 
-    const simpleResult = {
-        address: true,
-        bedrooms: true,
-        bathrooms: true,
-        price: true,
-        yearBuilt: true,
-        longitude: true,
-        homeStatus: true,
-        latitude: true,
-        description: true,
-        livingArea: true,
-        currency: true,
-        hdpUrl: true,
-        hugePhotos: true,
-    };
-
-    const getSimpleResult = createGetSimpleResult(
-        input.simple
-            ? simpleResult
-            : {
-                ...simpleResult,
-                datePosted: true,
-                isZillowOwned: true,
-                priceHistory: true,
-                zpid: true,
-                isPremierBuilder: true,
-                primaryPublicVideo: true,
-                tourViewCount: true,
-                postingContact: true,
-                unassistedShowing: true,
-                homeType: true,
-                comingSoonOnMarketDate: true,
-                timeZone: true,
-                newConstructionType: true,
-                moveInReady: true,
-                moveInCompletionDate: true,
-                lastSoldPrice: true,
-                contingentListingType: true,
-                zestimate: true,
-                zestimateLowPercent: true,
-                zestimateHighPercent: true,
-                rentZestimate: true,
-                restimateLowPercent: true,
-                restimateHighPercent: true,
-                solarPotential: true,
-                brokerId: true,
-                parcelId: true,
-                homeFacts: true,
-                taxAssessedValue: true,
-                taxAssessedYear: true,
-                isPreforeclosureAuction: true,
-                listingProvider: true,
-                marketingName: true,
-                building: true,
-                priceChange: true,
-                datePriceChanged: true,
-                dateSold: true,
-                lotSize: true,
-                hoaFee: true,
-                mortgageRates: true,
-                propertyTaxRate: true,
-                whatILove: true,
-                isFeatured: true,
-                isListedByOwner: true,
-                isCommunityPillar: true,
-                pageViewCount: true,
-                favoriteCount: true,
-                openHouseSchedule: true,
-                brokerageName: true,
-                taxHistory: true,
-                abbreviatedAddress: true,
-                ownerAccount: true,
-                isRecentStatusChange: true,
-                isNonOwnerOccupied: true,
-                buildingId: true,
-                daysOnZillow: true,
-                rentalApplicationsAcceptedType: true,
-                buildingPermits: true,
-                highlights: true,
-                tourEligibility: true,
-            },
-    );
-
-    const zpids = new Set(await Apify.getValue('STATE'));
-
-    // should store biggest discovered zpids count (typically from the first loaded search page before map splitting)
-    let maxZpidsFound = 0;
+    /** @type {any} */
+    const zpidsValues = await Apify.getValue('STATE');
+    const zpids = new Set(zpidsValues);
 
     const globalContext = {
         zpids,
         input,
-        maxZpidsFound,
+        maxZpidsFound: 0, // should store biggest discovered zpids count (typically from the first loaded search page before map splitting)
     };
 
     Apify.events.on('migrating', async () => {
@@ -160,54 +58,7 @@ Apify.main(async () => {
 
     const requestQueue = await Apify.openRequestQueue();
 
-    /**
-     * @type {Apify.RequestOptions[]}
-     */
-    const startUrls = [];
-
-    if (input.search && input.search.trim()) {
-        const term = input.search.trim();
-
-        startUrls.push({
-            url: 'https://www.zillow.com',
-            uniqueKey: `${term}`,
-            userData: {
-                label: LABELS.SEARCH,
-                term,
-            },
-        });
-    }
-
-    if (input.startUrls && input.startUrls.length) {
-        if (input.type) {
-            log.warning(`Input type "${input.type}" will be ignored as the value is derived from start url.
-            Check if your start urls match the desired home status.`);
-        }
-
-        const requestList = await Apify.openRequestList('STARTURLS', input.startUrls);
-
-        let req;
-        while (req = await requestList.fetchNextRequest()) { // eslint-disable-line no-cond-assign
-            if (!req.url.includes('zillow.com')) {
-                throw new Error(`Invalid startUrl ${req.url}`);
-            }
-
-            startUrls.push({
-                url: req.url,
-                userData: getUrlData(req.url),
-            });
-        }
-    }
-
-    if (input.zpids && input.zpids.length) {
-        startUrls.push({
-            url: 'https://www.zillow.com/',
-            uniqueKey: 'ZPIDS',
-            userData: {
-                label: LABELS.ZPIDS,
-            },
-        });
-    }
+    const startUrls = await getInitializedStartUrls(input);
 
     /**
      * @type {ReturnType<typeof createQueryZpid>}
@@ -231,7 +82,7 @@ Apify.main(async () => {
     }
 
     const isOverItems = (extra = 0) => (typeof input.maxItems === 'number' && input.maxItems > 0
-        ? (zpids.size + extra) >= input.maxItems
+        ? (globalContext.zpids.size + extra) >= input.maxItems
         : false);
 
     const extendOutputFunction = await getExtendOutputFunction(globalContext, minMaxDate, getSimpleResult);
@@ -251,7 +102,7 @@ Apify.main(async () => {
                 return queryZpid;
             },
             getSimpleResult,
-            zpids,
+            zpids: globalContext.zpids,
             _,
             fns,
             extendOutputFunction,
@@ -263,17 +114,7 @@ Apify.main(async () => {
         label: 'SETUP',
     });
 
-    const headerGenerator = new HeaderGenerator({
-        browsers: [
-            { name: 'chrome', minVersion: 87 },
-        ],
-        devices: [
-            'desktop',
-        ],
-        operatingSystems: process.platform === 'win32'
-            ? ['windows']
-            : ['linux'],
-    });
+    const headerGenerator = getInitilizedHeaderGenerator();
 
     let isFinishing = false;
 
@@ -293,58 +134,15 @@ Apify.main(async () => {
         },
         proxyConfiguration: proxyConfig,
         preNavigationHooks: [async ({ request, page }, gotoOptions) => {
-            const userAgent = headerGenerator.getHeaders()['user-agent'];
+            /** @type {any} */
+            const headers = headerGenerator.getHeaders();
+            const userAgent = headers['user-agent'];
             log.debug(`User-agent: ${userAgent}`);
 
             await page.setUserAgent(userAgent);
 
             await puppeteer.blockRequests(page, {
-                urlPatterns: [
-                    '.gif',
-                    '.webp',
-                    '.jpeg',
-                    '.jpg',
-                    '.png',
-                    '.ttf',
-                    '.css.map',
-                    'www.googletagmanager.com',
-                    'www.googletagservices.com',
-                    'www.googleadservices.com',
-                    'www.google-analytics.com',
-                    'sb.scorecardresearch.com',
-                    'cdn.ampproject.org',
-                    'doubleclick.net',
-                    'pagead2.googlesyndication.com',
-                    'amazon-adsystem.com',
-                    'tpc.googlesyndication.com',
-                    'googleads.g.doubleclick.net',
-                    'pxl.jivox.com',
-                    'ib.adnxs.com',
-                    'static.ads-twitter.com',
-                    'bat.bing.com',
-                    'px-cloud.net',
-                    'fonts.gstatic.com',
-                    'tiqcdn.com',
-                    'fonts.googleapis.com',
-                    'photos.zillowstatic.com',
-                    'survata.com',
-                    'zg-api.com',
-                    'accounts.google.com',
-                    'casalemedia.com',
-                    'adsystem.com',
-                    '/collector',
-                    'tapad.com',
-                    'cdn.pdst.fm',
-                    'pdst-events-prod-sink',
-                    'doubleclick.net',
-                    'ct.pinterest.com',
-                    'sync.ipredictive.com',
-                    'adservice.google.com',
-                    'adsrvr.org',
-                    'pubmatic.com',
-                    'sentry-cdn.com',
-                    'api.rlcdn.com',
-                ].concat(request.userData.label === LABELS.DETAIL ? [
+                urlPatterns: URL_PATTERNS_TO_BLOCK.concat(request.userData.label === LABELS.DETAIL ? [
                     'maps.googleapis.com',
                     '.js',
                 ] : []),
@@ -375,7 +173,7 @@ Apify.main(async () => {
         }],
         browserPoolOptions: {
             maxOpenPagesPerBrowser: 1,
-            preLaunchHooks: [async (pageId, launchContext) => {
+            preLaunchHooks: [async (_pageId, launchContext) => {
                 launchContext.launchOptions = {
                     ...launchContext.launchOptions,
                     bypassCSP: true,
@@ -388,7 +186,7 @@ Apify.main(async () => {
                     fns.changeHandlePageTimeout(crawler, input.handlePageTimeoutSecs || 3600);
                 }
             }],
-            postPageCloseHooks: [async (_pageId, browserController) => {
+            postPageCloseHooks: [async (/** @type {any} */ _pageId, /** @type {any} */ browserController) => {
                 if (!browserController?.launchContext?.session?.isUsable()) {
                     log.debug('Session is not usable');
                     await browserController.close();
@@ -397,7 +195,10 @@ Apify.main(async () => {
         },
         maxConcurrency: !queryZpid ? 1 : 10,
         handlePageFunction: async ({ page, request, crawler: { autoscaledPool }, session, response, proxyInfo }) => {
-            if (!response || isOverItems()) {
+            const context = { page, request, crawler: { requestQueue, autoscaledPool }, session, response, proxyInfo };
+            const pageHandler = new PageHandler(context, globalContext, extendOutputFunction);
+
+            if (!response || pageHandler.isOverItems()) {
                 await page.close();
                 if (!response) {
                     throw new Error('No response from page');
@@ -410,9 +211,6 @@ Apify.main(async () => {
                 session.retire();
                 throw new Error('Captcha found, retrying...');
             }
-
-            const context = { page, request, crawler: { requestQueue, autoscaledPool }, session, response, proxyInfo };
-            const pageHandler = new PageHandler(context, globalContext, extendOutputFunction);
 
             const { label } = request.userData;
 
@@ -462,5 +260,5 @@ Apify.main(async () => {
         throw new Error('The selected proxy group seems to be blocked, try a different one or contact Apify on Intercom');
     }
 
-    log.info(`Done with ${zpids.size} listings!`);
+    log.info(`Done with ${globalContext.zpids.size} listings!`);
 });

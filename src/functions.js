@@ -3,7 +3,8 @@ const moment = require('moment');
 const Puppeteer = require('puppeteer'); // eslint-disable-line no-unused-vars
 const { createHash } = require('crypto');
 const vm = require('vm');
-const { LABELS } = require('./constants');
+// eslint-disable-next-line no-unused-vars
+const { LABELS, TYPES } = require('./constants');
 
 const { log, requestAsBrowser } = Apify.utils;
 
@@ -358,13 +359,13 @@ const queryRegionHomes = async ({ qs, cat = 'cat1' }) => {
     };
 };
 
-
-
 /**
  *
  * @param {Apify.Request} request
  * @param {keyof TYPES} inputType
+ * @param {Puppeteer.Page} page
  * @param {any} pageQs
+ * @param {Number} paginationPage
  * @returns query states with total count
  */
 const extractQueryStates = async (request, inputType, page, pageQs, paginationPage = 1) => {
@@ -389,12 +390,7 @@ const extractQueryStates = async (request, inputType, page, pageQs, paginationPa
         for (const filterState of filterStates) {
             qs.filterState = filterState;
             const url = `https://www.zillow.com/search/GetSearchPageState.htm?searchQueryState=${JSON.stringify(qs)}&wants=${JSON.stringify(wants)}&requestId=${Math.floor(Math.random() * 70) + 1}`;
-            log.info(`Fetching url: ${url}`);
-
-            // const result = await Apify.utils.requestAsBrowser({ url });
-
-            // TODO: test performance of Apify.utils.requestAsBrowser vs fetch inside page.evaluate function
-            // (page.evaluate option seems more blocking resistent)
+            log.debug(`Fetching url: ${url}`);
 
             const result = await page.evaluate(
                 queryRegionHomes,

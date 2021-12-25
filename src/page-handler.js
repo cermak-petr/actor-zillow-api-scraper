@@ -3,7 +3,7 @@ const { sleep } = require('apify/build/utils');
 const _ = require('lodash');
 
 const Puppeteer = require('puppeteer'); // eslint-disable-line no-unused-vars
-const { LABELS } = require('./constants');
+const { LABELS, RESULTS_LIMIT } = require('./constants');
 
 const fns = require('./functions');
 
@@ -212,121 +212,27 @@ class PageHandler {
      * @returns
      */
     async handleQueryAndSearchPage(label, queryZpid) {
-        const { page, request, requestQueue, session } = this.context;
-        const { zpids, input } = this.globalContext;
+        const { request: { userData: { term } } } = this.context;
 
-        if (label === LABELS.SEARCH) {
-            log.info(`Searching for "${request.userData.term}"`);
-
-            const text = '#search-box-input';
-            const btn = 'button#search-icon';
-
-            await page.waitForRequest((req) => req.url().includes('/login'));
-
-            await Promise.all([
-                page.waitForSelector(text),
-                page.waitForSelector(btn),
-            ]);
-
-            await page.focus(text);
-            await Promise.all([
-                page.waitForResponse((res) => res.url().includes('suggestions')),
-                page.type(text, request.userData.term, { delay: 150 }),
-            ]);
-
-            try {
-                await Promise.all([
-                    page.waitForNavigation({ timeout: 10000 }),
-                    page.tap(btn),
-                ]);
-            } catch (/** @type {any} */ e) {
-                log.debug(e.message);
-
-                const interstitial = await page.$$('#interstitial-title');
-                if (!interstitial.length) {
-                    session.retire();
-                    throw new Error('Search didn\'t redirect, retrying...');
-                } else {
-                    const skip = await page.$x('//button[contains(., "Skip")]');
-
-                    try {
-                        await Promise.all([
-                            page.waitForNavigation({ timeout: 25000 }),
-                            skip[0].click(),
-                        ]);
-                    } catch (/** @type {any} */ er) {
-                        log.debug(`Insterstitial`, { message: er.message });
-                        throw new Error('Search page didn\'t redirect in time');
-                    }
-                }
-            }
-
-            if ((!/(\/homes\/|_rb)/.test(page.url()) || page.url().includes('/_rb/') || page.url().includes('_zpid')) && !page.url().includes('searchQueryState')) {
-                session.retire();
-                throw new Error(`Unexpected page address ${page.url()}, use a better keyword for searching or proper state or city name. Will retry...`);
-            }
-
-            if (await page.$('.captcha-container')) {
-                session.retire();
-                throw new Error('Captcha found when searching, retrying...');
-            }
-        }
-
-        // Get initial searchState
         const queryStates = [];
         let totalCount = 0;
         let shouldContinue = true;
 
+        if (label === LABELS.SEARCH) {
+            log.info(`Searching for "${term}"`);
+            await this._waitForSearchPageToLoad();
+        }
+
         try {
-            const pageQs = await page.evaluate(() => {
-                const pageQsElement = document.querySelector(
-                    'script[data-zrr-shared-data-key="mobileSearchPageStore"]',
-                );
-                const slicedPageQs = pageQsElement ? pageQsElement.innerHTML.slice(4, -3) : '';
-                return JSON.parse(slicedPageQs);
-            });
+            const pageQs = await this._getPageQs();
+            const results = this.__getPageQsResults(pageQs);
 
-            const results = [
-                ..._.get(pageQs, 'cat1.searchResults.listResults', []),
-                ..._.get(pageQs, 'cat1.searchResults.mapResults', []),
-                ..._.get(pageQs, 'cat2.searchResults.listResults', []),
-                ..._.get(pageQs, 'cat2.searchResults.mapResults', []),
-            ];
-
-            for (const { zpid, detailUrl } of results) {
-                await this.dump(zpid, results);
-
-                if (zpid) {
-                    if (this.isOverItems()) {
-                        shouldContinue = false;
-                        break;
-                    }
-                    await this.processZpid(zpid, detailUrl, queryZpid);
-                }
-            }
+            shouldContinue = await this._processPageQsResults(results, queryZpid);
 
             if (shouldContinue) {
-                let extractedQueryStates = await extractQueryStates(request, input.type, page, pageQs);
-                queryStates.push(...extractedQueryStates.states);
-                totalCount += extractedQueryStates.totalCount;
-                log.info(`Found ${totalCount} results on the current page.`);
-
-                this.globalContext.maxZpidsFound = Math.max(totalCount, this.globalContext.maxZpidsFound);
-
-                /* If more than 500 results were found, map will be splitted into 4 quadrants later.
-                For results < 500, pagination pages will be enqueued instead. Zillow doesn't always
-                provide all map results from the current page, even if their count is < 500.
-                E.g. for 115 map results it only gives 84. But they can still be extracted from
-                list results using pagination search. */
-                if (totalCount > 0 && totalCount < 500 && zpids.size < this.globalContext.maxZpidsFound) {
-                    log.info(`Found ${totalCount} results, map splitting won't be used, pagination pages will be enqueued.`);
-                    const LISTINGS_PER_PAGE = 40;
-                    const pagesCount = (totalCount / LISTINGS_PER_PAGE) + 1;
-                    for (let i = 2; i <= pagesCount; i++) {
-                        extractedQueryStates = await extractQueryStates(request, input.type, page, pageQs, i);
-                        queryStates.push(...extractedQueryStates.states);
-                    }
-                }
+                const extracted = await this._extractQueryStatesForAllPages(pageQs);
+                queryStates.push(...extracted.states);
+                totalCount = extracted.totalCount;
             }
         } catch (/** @type {any} */ e) {
             log.debug(e);
@@ -335,113 +241,7 @@ class PageHandler {
         log.debug('searchState', { queryStates });
 
         if (shouldContinue && queryStates?.length) {
-            // Check mapResults
-            const results = queryStates.flatMap(({ searchState }) => [
-                ..._.get(
-                    searchState,
-                    'cat1.searchResults.mapResults',
-                    [],
-                ),
-                ..._.get(
-                    searchState,
-                    'cat1.searchResults.listResults',
-                    [],
-                ),
-                ..._.get(
-                    searchState,
-                    'cat2.searchResults.mapResults',
-                    [],
-                ),
-                ..._.get(
-                    searchState,
-                    'cat2.searchResults.listResults',
-                    [],
-                ),
-            ]);
-
-            if (!results?.length) {
-                log.info(`No results, retiring session.`);
-                session.retire();
-                if (totalCount > 0) {
-                    await Apify.setValue(`SEARCHSTATE-${Math.random()}`, queryStates);
-                    throw new Error(`No map results but result count is ${totalCount}`);
-                } else {
-                    log.debug('Really zero results');
-                    throw new Error(`Zero results found. Retry request.`);
-                }
-            }
-
-            await Apify.setValue('QUERY-STATES', queryStates);
-
-            for (const { qs } of queryStates) {
-                if (zpids.size >= this.globalContext.maxZpidsFound) {
-                    return; // all results extracted already, performance optimization
-                }
-
-                log.info(`Searching homes at ${JSON.stringify(qs.mapBounds)}`, {
-                    url: page.url(),
-                });
-
-                const thr = input.splitThreshold || 500;
-
-                if (results.length >= thr) {
-                    if (input.maxLevel && (request.userData.splitCount || 0) >= input.maxLevel) {
-                        log.info('Over max level');
-                    } else {
-                        // Split map and enqueue sub-rectangles
-                        const splitCount = (request.userData.splitCount || 0) + 1;
-                        const splits = splitQueryState(qs);
-
-                        for (const searchQueryState of splits) {
-                            if (this.isOverItems()) {
-                                break;
-                            }
-
-                            const uniqueKey = quickHash(`${request.url}${splitCount}${JSON.stringify(searchQueryState)}`);
-                            log.debug('queryState', { searchQueryState, uniqueKey });
-                            const url = new URL(request.url);
-
-                            url.searchParams.set('searchQueryState', JSON.stringify(searchQueryState));
-
-                            await requestQueue.addRequest({
-                                url: url.toString(),
-                                userData: {
-                                    searchQueryState,
-                                    label: LABELS.QUERY,
-                                    splitCount,
-                                },
-                                uniqueKey,
-                            });
-                        }
-                    }
-                }
-
-                if (results.length > 0) {
-                    const extracted = () => {
-                        log.info(`Extracted total ${zpids.size}`);
-                    };
-                    const interval = setInterval(extracted, 10000);
-
-                    try {
-                        for (const { zpid, detailUrl } of results) {
-                            await this.dump(zpid, results);
-
-                            if (zpid) {
-                                await this.processZpid(zpid, detailUrl, queryZpid);
-
-                                if (this.isOverItems()) {
-                                    break; // optimize runtime
-                                }
-                            }
-                        }
-                    } finally {
-                        if (!this.anyErrors) {
-                            extracted();
-                        }
-                        clearInterval(interval);
-                    }
-                }
-            }
+            await this._processExtractedQueryStates(queryStates, totalCount, queryZpid);
         }
     }
 
@@ -453,12 +253,12 @@ class PageHandler {
      * @returns
      */
     async processZpid(zpid, detailUrl, queryZpid) {
+        const { page, request, requestQueue, session } = this.context;
+        const { zpids } = this.globalContext;
+
         if (this.isOverItems()) {
             return;
         }
-
-        const { page, request, requestQueue, session } = this.context;
-        const { zpids } = this.globalContext;
 
         try {
             if (!zpid) {
@@ -475,7 +275,7 @@ class PageHandler {
             }
 
             if (!session.isUsable()) {
-                throw new Error('Not trying to retrieve data');
+                throw new Error('Not trying to retrieve data, session is not usable anymore');
             }
 
             log.debug(`Extracting ${zpid}`);
@@ -519,6 +319,330 @@ class PageHandler {
 
     foundAnyErrors() {
         return this.anyErrors;
+    }
+
+    async _waitForSearchPageToLoad() {
+        const { page, request, session } = this.context;
+
+        const text = '#search-box-input';
+        const btn = 'button#search-icon';
+
+        await page.waitForRequest((/** @type {any} */ req) => req.url().includes('/login'));
+
+        await Promise.all([
+            page.waitForSelector(text),
+            page.waitForSelector(btn),
+        ]);
+
+        await page.focus(text);
+        await Promise.all([
+            page.waitForResponse((/** @type {any} */ res) => res.url().includes('suggestions')),
+            page.type(text, request.userData.term, { delay: 150 }),
+        ]);
+
+        try {
+            await Promise.all([
+                page.waitForNavigation({ timeout: 10000 }),
+                page.tap(btn),
+            ]);
+        } catch (/** @type {any} */ e) {
+            log.debug(e.message);
+
+            const interstitial = await page.$$('#interstitial-title');
+            if (!interstitial.length) {
+                session.retire();
+                throw new Error('Search didn\'t redirect, retrying...');
+            } else {
+                const skip = await page.$x('//button[contains(., "Skip")]');
+
+                try {
+                    await Promise.all([
+                        page.waitForNavigation({ timeout: 25000 }),
+                        skip[0].click(),
+                    ]);
+                } catch (/** @type {any} */ er) {
+                    log.debug(`Insterstitial`, { message: er.message });
+                    throw new Error('Search page didn\'t redirect in time');
+                }
+            }
+        }
+
+        if ((!/(\/homes\/|_rb)/.test(page.url()) || page.url().includes('/_rb/') || page.url().includes('_zpid')) && !page.url().includes('searchQueryState')) {
+            session.retire();
+            throw new Error(`Unexpected page address ${page.url()}, use a better keyword for searching or proper state or city name. Will retry...`);
+        }
+
+        if (await page.$('.captcha-container')) {
+            session.retire();
+            throw new Error('Captcha found when searching, retrying...');
+        }
+    }
+
+    async _getPageQs() {
+        const { page } = this.context;
+
+        return page.evaluate(() => {
+            const pageQsElement = document.querySelector(
+                'script[data-zrr-shared-data-key="mobileSearchPageStore"]',
+            );
+            const slicedPageQs = pageQsElement ? pageQsElement.innerHTML.slice(4, -3) : '';
+            return slicedPageQs ? JSON.parse(slicedPageQs) : {};
+        });
+    }
+
+    /**
+     *
+     * @param {any} pageQs
+     * @returns array of list results and map results for cat1 and cat2 merged
+     */
+    __getPageQsResults(pageQs) {
+        return [
+            ..._.get(pageQs, 'cat1.searchResults.listResults', []),
+            ..._.get(pageQs, 'cat1.searchResults.mapResults', []),
+            ..._.get(pageQs, 'cat2.searchResults.listResults', []),
+            ..._.get(pageQs, 'cat2.searchResults.mapResults', []),
+        ];
+    }
+
+    /**
+     *
+     * @param {any[]} results
+     * @param {ReturnType<typeof createQueryZpid>} queryZpid
+     * @returns result of shouldContinue
+     */
+    async _processPageQsResults(results, queryZpid) {
+        let shouldContinue = true;
+
+        for (const { zpid, detailUrl } of results) {
+            await this.dump(zpid, results);
+
+            if (zpid) {
+                if (this.isOverItems()) {
+                    shouldContinue = false;
+                    break;
+                }
+                await this.processZpid(zpid, detailUrl, queryZpid);
+            }
+        }
+
+        return shouldContinue;
+    }
+
+    /**
+     *
+     * @param {any} pageQs
+     * @returns extracted query states with total count stored
+     */
+    async _extractQueryStatesForAllPages(pageQs) {
+        const { request, page } = this.context;
+        const { zpids, input } = this.globalContext;
+
+        const extractedQueryStates = await extractQueryStates(request, input.type, page, pageQs);
+        const { totalCount } = extractedQueryStates;
+
+        log.info(`Found ${totalCount} results on the current page.`);
+
+        this.globalContext.maxZpidsFound = Math.max(totalCount, this.globalContext.maxZpidsFound);
+
+        /* If more than RESULTS_LIMIT results were found, map will be splitted into 4 quadrants later.
+        For results < RESULTS_LIMIT, pagination pages will be enqueued instead. Zillow doesn't always
+        provide all map results from the current page, even if their count is < RESULTS_LIMIT.
+        E.g. for 115 map results it only gives 84. But they can still be extracted from
+        list results using pagination search. */
+        if (totalCount > 0 && totalCount < RESULTS_LIMIT && zpids.size < this.globalContext.maxZpidsFound) {
+            log.info(`Found ${totalCount} results, map splitting won't be used, pagination pages will be enqueued.`);
+            const LISTINGS_PER_PAGE = 40;
+
+            // first pagination page is already fetched successfully, pages are ordered from 1 (not from 0)
+            const pagesCount = (totalCount / LISTINGS_PER_PAGE) + 1;
+
+            for (let i = 2; i <= pagesCount; i++) {
+                const paginationQueryStates = await extractQueryStates(request, input.type, page, pageQs, i);
+                extractedQueryStates.states.push(...paginationQueryStates.states);
+            }
+        }
+
+        return extractedQueryStates;
+    }
+
+    /**
+     *
+     * @param {any[]} queryStates
+     * @param {Number} totalCount
+     * @param {ReturnType<typeof createQueryZpid>} queryZpid
+     * @returns
+     */
+    async _processExtractedQueryStates(queryStates, totalCount, queryZpid) {
+        const { page } = this.context;
+        const { zpids } = this.globalContext;
+
+        const results = this._mergeListResultsMapResults(queryStates);
+        await this._validateQueryStatesResults(results, queryStates, totalCount);
+
+        await Apify.setValue('QUERY-STATES', queryStates);
+
+        for (const { qs } of queryStates) {
+            if (zpids.size >= this.globalContext.maxZpidsFound) {
+                return; // all results extracted already, performance optimization
+            }
+
+            log.info(`Searching homes at ${JSON.stringify(qs.mapBounds)}`, {
+                url: page.url(),
+            });
+
+            await this._tryEnqueueMapSplits(qs, totalCount);
+            await this._extractZpidsFromResults(results, queryZpid);
+        }
+    }
+
+    /**
+     *
+     * @param {any[]} queryStates
+     * @returns merged list results and map results
+     */
+    _mergeListResultsMapResults(queryStates) {
+        return queryStates.flatMap(({ searchState }) => [
+            ..._.get(
+                searchState,
+                'cat1.searchResults.mapResults',
+                [],
+            ),
+            ..._.get(
+                searchState,
+                'cat1.searchResults.listResults',
+                [],
+            ),
+            ..._.get(
+                searchState,
+                'cat2.searchResults.mapResults',
+                [],
+            ),
+            ..._.get(
+                searchState,
+                'cat2.searchResults.listResults',
+                [],
+            ),
+        ]);
+    }
+
+    /**
+     * Retires session and throws error if no results were found
+     * @param {any[]} results
+     * @param {any[]} queryStates
+     * @param {Number} totalCount
+     */
+    async _validateQueryStatesResults(results, queryStates, totalCount) {
+        const { session } = this.context;
+
+        if (!results?.length) {
+            log.info(`No results, retiring session.`);
+            session.retire();
+            if (totalCount > 0) {
+                await Apify.setValue(`SEARCHSTATE-${Math.random()}`, queryStates);
+                throw new Error(`No map results but result count is ${totalCount}`);
+            } else {
+                log.debug('Really zero results');
+                throw new Error(`Zero results found. Retry request.`);
+            }
+        }
+    }
+
+    /**
+     *
+     * @param {{
+     *   mapBounds: {
+     *   mapZoom: Number,
+     *   south: Number,
+     *   east: Number,
+     *   north: Number,
+     *   west: Number,
+     * }}} queryState,
+     * @param {Number} totalCount
+     */
+    async _tryEnqueueMapSplits(queryState, totalCount) {
+        const { request } = this.context;
+        const { input } = this.globalContext;
+
+        const mapSplittingThreshold = input.splitThreshold || RESULTS_LIMIT;
+
+        if (totalCount >= mapSplittingThreshold) {
+            if (input.maxLevel && (request.userData.splitCount || 0) >= input.maxLevel) {
+                log.info('Over max level');
+            } else {
+                // Split map and enqueue sub-rectangles
+                log.info('Splitting map into 4 quadrants and zooming in');
+                const splitCount = (request.userData.splitCount || 0) + 1;
+                const splits = splitQueryState(queryState);
+                await this._enqueueMapSplits(splits, splitCount);
+            }
+        }
+    }
+
+    /**
+     *
+     * @param {any[]} splits
+     * @param {Number} splitCount
+     */
+    async _enqueueMapSplits(splits, splitCount) {
+        const { request, requestQueue } = this.context;
+
+        for (const searchQueryState of splits) {
+            if (this.isOverItems()) {
+                break;
+            }
+
+            const uniqueKey = quickHash(`${request.url}${splitCount}${JSON.stringify(searchQueryState)}`);
+            log.debug('queryState', { searchQueryState, uniqueKey });
+            const url = new URL(request.url);
+
+            url.searchParams.set('searchQueryState', JSON.stringify(searchQueryState));
+
+            log.info(`Enqueuing map split request: ${url.toString()}`);
+            await requestQueue.addRequest({
+                url: url.toString(),
+                userData: {
+                    searchQueryState,
+                    label: LABELS.QUERY,
+                    splitCount,
+                },
+                uniqueKey,
+            });
+        }
+    }
+
+    /**
+     * Extracts zpids from results, processes zpids and sets extraction info interval
+     * @param {any[]} results
+     * @param {ReturnType<typeof createQueryZpid>} queryZpid
+     */
+    async _extractZpidsFromResults(results, queryZpid) {
+        const { zpids } = this.globalContext;
+
+        if (results.length > 0) {
+            const extracted = () => {
+                log.info(`Extracted total ${zpids.size}`);
+            };
+            const interval = setInterval(extracted, 10000);
+
+            try {
+                for (const { zpid, detailUrl } of results) {
+                    await this.dump(zpid, results);
+
+                    if (zpid) {
+                        await this.processZpid(zpid, detailUrl, queryZpid);
+
+                        if (this.isOverItems()) {
+                            break; // optimize runtime
+                        }
+                    }
+                }
+            } finally {
+                if (!this.anyErrors) {
+                    extracted();
+                }
+                clearInterval(interval);
+            }
+        }
     }
 }
 
