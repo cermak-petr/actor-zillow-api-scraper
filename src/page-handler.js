@@ -3,14 +3,16 @@ const { sleep } = require('apify/build/utils');
 const _ = require('lodash');
 
 const Puppeteer = require('puppeteer'); // eslint-disable-line no-unused-vars
-const { LABELS, RESULTS_LIMIT } = require('./constants');
+const { LABELS, TYPES, RESULTS_LIMIT } = require('./constants'); // eslint-disable-line no-unused-vars
 
 const fns = require('./functions');
 
 const {
     createQueryZpid,
     interceptQueryId,
-    extractQueryStates, quickHash, splitQueryState,
+    extractQueryStates,
+    quickHash,
+    splitQueryState,
 } = fns;
 
 const { log } = Apify.utils;
@@ -35,7 +37,7 @@ class PageHandler {
      *      maxLevel: Number,
      *      splitThreshold: Number,
      *      startUrls: Apify.RequestOptions[],
-     *      type: String,
+     *      type: keyof TYPES,
      *      zpids: any[]
      *  },
      *  maxZpidsFound: Number,
@@ -230,7 +232,7 @@ class PageHandler {
             shouldContinue = await this._processPageQsResults(results, queryZpid);
 
             if (shouldContinue) {
-                const extracted = await this._extractQueryStatesForAllPages(pageQs);
+                const extracted = await this._extractQueryStatesForCurrentPage(pageQs);
                 queryStates.push(...extracted.states);
                 totalCount = extracted.totalCount;
             }
@@ -433,34 +435,18 @@ class PageHandler {
      * @param {any} pageQs
      * @returns extracted query states with total count stored
      */
-    async _extractQueryStatesForAllPages(pageQs) {
+    async _extractQueryStatesForCurrentPage(pageQs) {
         const { request, page } = this.context;
-        const { zpids, input } = this.globalContext;
+        const { input } = this.globalContext;
 
-        const extractedQueryStates = await extractQueryStates(request, input.type, page, pageQs);
+        const pageNumber = request.userData.pageNumber ? request.userData.pageNumber : 1;
+
+        const extractedQueryStates = await extractQueryStates(request, input.type, page, pageQs, pageNumber);
         const { totalCount } = extractedQueryStates;
 
         log.info(`Found ${totalCount} results on the current page.`);
 
         this.globalContext.maxZpidsFound = Math.max(totalCount, this.globalContext.maxZpidsFound);
-
-        /* If more than RESULTS_LIMIT results were found, map will be splitted into 4 quadrants later.
-        For results < RESULTS_LIMIT, pagination pages will be enqueued instead. Zillow doesn't always
-        provide all map results from the current page, even if their count is < RESULTS_LIMIT.
-        E.g. for 115 map results it only gives 84. But they can still be extracted from
-        list results using pagination search. */
-        if (totalCount > 0 && totalCount < RESULTS_LIMIT && zpids.size < this.globalContext.maxZpidsFound) {
-            log.info(`Found ${totalCount} results, map splitting won't be used, pagination pages will be enqueued.`);
-            const LISTINGS_PER_PAGE = 40;
-
-            // first pagination page is already fetched successfully, pages are ordered from 1 (not from 0)
-            const pagesCount = (totalCount / LISTINGS_PER_PAGE) + 1;
-
-            for (let i = 2; i <= pagesCount; i++) {
-                const paginationQueryStates = await extractQueryStates(request, input.type, page, pageQs, i);
-                extractedQueryStates.states.push(...paginationQueryStates.states);
-            }
-        }
 
         return extractedQueryStates;
     }
@@ -473,8 +459,9 @@ class PageHandler {
      * @returns
      */
     async _processExtractedQueryStates(queryStates, totalCount, queryZpid) {
-        const { page } = this.context;
+        const { page, request: { userData: { pageNumber } } } = this.context;
         const { zpids } = this.globalContext;
+        const currentPage = pageNumber || 1;
 
         const results = this._mergeListResultsMapResults(queryStates);
         await this._validateQueryStatesResults(results, queryStates, totalCount);
@@ -490,7 +477,11 @@ class PageHandler {
                 url: page.url(),
             });
 
-            await this._tryEnqueueMapSplits(qs, totalCount);
+            if (currentPage === 1) {
+                await this._tryEnqueueMapSplits(qs, totalCount);
+                await this._tryEnqueuePaginationPages(qs, totalCount);
+            }
+
             await this._extractZpidsFromResults(results, queryZpid);
         }
     }
@@ -574,6 +565,46 @@ class PageHandler {
                 const splitCount = (request.userData.splitCount || 0) + 1;
                 const splits = splitQueryState(queryState);
                 await this._enqueueMapSplits(splits, splitCount);
+            }
+        }
+    }
+
+    /**
+     * @param {any} searchQueryState
+     * @param {Number} totalCount
+     */
+    async _tryEnqueuePaginationPages(searchQueryState, totalCount) {
+        /* If more than RESULTS_LIMIT results were found, map will be splitted into 4 quadrants later.
+        For results < RESULTS_LIMIT, pagination pages will be enqueued instead. Zillow doesn't always
+        provide all map results from the current page, even if their count is < RESULTS_LIMIT.
+        E.g. for 115 map results it only gives 84. But they can still be extracted from
+        list results using pagination search. */
+        const { requestQueue, request } = this.context;
+        const { zpids } = this.globalContext;
+
+        if (totalCount > 0 && totalCount < RESULTS_LIMIT && zpids.size < this.globalContext.maxZpidsFound) {
+            log.info(`Found ${totalCount} results, map splitting won't be used, pagination pages will be enqueued.`);
+            const LISTINGS_PER_PAGE = 40;
+
+            // first pagination page is already fetched successfully, pages are ordered from 1 (not from 0)
+            const pagesCount = (totalCount / LISTINGS_PER_PAGE) + 1;
+
+            const url = new URL(request.url);
+            url.searchParams.set('searchQueryState', JSON.stringify(searchQueryState));
+
+            for (let i = 2; i <= pagesCount; i++) {
+                const uniqueKey = quickHash(`${url}${i}${JSON.stringify(searchQueryState)}`);
+
+                log.info(`Enqueuing pagination page number ${i} for url: ${url.toString()}`);
+                await requestQueue.addRequest({
+                    url: url.toString(),
+                    userData: {
+                        searchQueryState,
+                        label: LABELS.QUERY,
+                        pageNumber: i,
+                    },
+                    uniqueKey,
+                });
             }
         }
     }

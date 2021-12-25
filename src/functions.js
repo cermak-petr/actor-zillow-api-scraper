@@ -3,8 +3,7 @@ const moment = require('moment');
 const Puppeteer = require('puppeteer'); // eslint-disable-line no-unused-vars
 const { createHash } = require('crypto');
 const vm = require('vm');
-// eslint-disable-next-line no-unused-vars
-const { LABELS, TYPES } = require('./constants');
+const { LABELS, TYPES } = require('./constants'); // eslint-disable-line no-unused-vars
 
 const { log, requestAsBrowser } = Apify.utils;
 
