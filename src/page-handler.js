@@ -3,7 +3,7 @@ const { sleep } = require('apify/build/utils');
 const _ = require('lodash');
 
 const Puppeteer = require('puppeteer'); // eslint-disable-line no-unused-vars
-const { LABELS, TYPES, RESULTS_LIMIT } = require('./constants'); // eslint-disable-line no-unused-vars
+const { LABELS, TYPES, RESULTS_LIMIT, PAGES_LIMIT } = require('./constants'); // eslint-disable-line no-unused-vars
 
 const fns = require('./functions');
 
@@ -570,24 +570,22 @@ class PageHandler {
     }
 
     /**
+     * Zillow doesn't always provide all map results from the current page,
+     * even if their count is < RESULTS_LIMIT. E.g. for 115 map results it only gives 84.
+     * But they can still be extracted from list results using pagination search.
      * @param {any} searchQueryState
      * @param {Number} totalCount
      */
     async _tryEnqueuePaginationPages(searchQueryState, totalCount) {
-        /* If more than RESULTS_LIMIT results were found, map will be splitted into 4 quadrants later.
-        For results < RESULTS_LIMIT, pagination pages will be enqueued instead. Zillow doesn't always
-        provide all map results from the current page, even if their count is < RESULTS_LIMIT.
-        E.g. for 115 map results it only gives 84. But they can still be extracted from
-        list results using pagination search. */
         const { requestQueue, request } = this.context;
         const { zpids } = this.globalContext;
 
-        if (totalCount > 0 && totalCount < RESULTS_LIMIT && zpids.size < this.globalContext.maxZpidsFound) {
-            log.info(`Found ${totalCount} results, map splitting won't be used, pagination pages will be enqueued.`);
+        if (totalCount > 0 && zpids.size < this.globalContext.maxZpidsFound) {
+            log.info(`Found ${totalCount} results, pagination pages will be enqueued.`);
             const LISTINGS_PER_PAGE = 40;
 
             // first pagination page is already fetched successfully, pages are ordered from 1 (not from 0)
-            const pagesCount = (totalCount / LISTINGS_PER_PAGE) + 1;
+            const pagesCount = Math.min((totalCount / LISTINGS_PER_PAGE) + 1, PAGES_LIMIT);
 
             const url = new URL(request.url);
             url.searchParams.set('searchQueryState', JSON.stringify(searchQueryState));
@@ -595,7 +593,7 @@ class PageHandler {
             for (let i = 2; i <= pagesCount; i++) {
                 const uniqueKey = quickHash(`${url}${i}${JSON.stringify(searchQueryState)}`);
 
-                log.info(`Enqueuing pagination page number ${i} for url: ${url.toString()}`);
+                log.debug(`Enqueuing pagination page number ${i} for url: ${url.toString()}`);
                 await requestQueue.addRequest({
                     url: url.toString(),
                     userData: {

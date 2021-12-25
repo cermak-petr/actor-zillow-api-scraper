@@ -24,6 +24,7 @@ const TYPES = {
 const INITIAL_URL = 'https://www.zillow.com/homes/Los-Angeles_rb/';
 
 const RESULTS_LIMIT = 500;
+const PAGES_LIMIT = 20;
 
 const URL_PATTERNS_TO_BLOCK = [
     '.gif',
@@ -77,5 +78,6 @@ module.exports = {
     TYPES,
     INITIAL_URL,
     RESULTS_LIMIT,
+    PAGES_LIMIT,
     URL_PATTERNS_TO_BLOCK,
 };
