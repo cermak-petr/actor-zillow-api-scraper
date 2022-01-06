@@ -187,13 +187,15 @@ const proxyConfiguration = async ({
 /**
  * Patch the crawler instance for new timeouts
  *
- * @param {Apify.BrowserCrawler} crawler
+ * @param {Apify.BrowserCrawler | null} crawler
  * @param {number} handlePageTimeoutSecs
  */
 const changeHandlePageTimeout = (crawler, handlePageTimeoutSecs) => {
-    crawler.handlePageTimeoutSecs = handlePageTimeoutSecs;
-    crawler.handlePageTimeoutMillis = handlePageTimeoutSecs * 1000;
-    crawler.handleRequestTimeoutMillis = crawler.handlePageTimeoutMillis;
+    if (crawler) {
+        crawler.handlePageTimeoutSecs = handlePageTimeoutSecs;
+        crawler.handlePageTimeoutMillis = handlePageTimeoutSecs * 1000;
+        crawler.handleRequestTimeoutMillis = crawler.handlePageTimeoutMillis;
+    }
 };
 
 /**
@@ -404,13 +406,62 @@ const extractQueryStates = async (request, inputType, page, pageQs, paginationPa
             const searchState = JSON.parse(result.body);
             queryStates.states.push({ qs, searchState });
 
-            await Apify.setValue('SEARCH_STATE', searchState);
+            if (log.getLevel() === log.LEVELS.DEBUG) {
+                await Apify.setValue('SEARCH_STATE', searchState);
+            }
 
             queryStates.totalCount += searchState?.categoryTotals?.[cat]?.totalResultCount ?? 0;
         }
     }
 
     return queryStates;
+};
+
+/**
+ *
+ * @param { {
+ *      zpid: any,
+ *      queryId: any,
+ *      clientVersion: any} } requestParams
+ * @returns
+ */
+const evaluateQueryZpid = async ({ zpid, queryId, clientVersion }) => {
+    zpid = +zpid || zpid;
+
+    const body = JSON.stringify({
+        operationName: 'ForSaleDoubleScrollFullRenderQuery',
+        variables: {
+            zpid,
+            contactFormRenderParameter: {
+                zpid,
+                platform: 'desktop',
+                isDoubleScroll: true,
+            },
+        },
+        clientVersion,
+        queryId,
+    });
+
+    const resp = await fetch(`https://www.zillow.com/graphql/?zpid=${zpid}&contactFormRenderParameter=&queryId=${queryId}&operationName=ForSaleDoubleScrollFullRenderQuery`, {
+        method: 'POST',
+        body,
+        headers: {
+            dnt: '1',
+            accept: '*/*',
+            'content-type': 'text/plain',
+            origin: document.location.origin,
+            pragma: 'no-cache',
+            referer: `${document.location.origin}/`,
+        },
+        mode: 'cors',
+        credentials: 'include',
+    });
+
+    if (resp.status !== 200) {
+        throw new Error(`Got status ${resp.status} from GraphQL`);
+    }
+
+    return (await resp.blob()).text();
 };
 
 /**
@@ -421,44 +472,8 @@ const extractQueryStates = async (request, inputType, page, pageQs, paginationPa
  * @returns {(page: Puppeteer.Page, zpid: string) => Promise<any>}
  */
 const createQueryZpid = (queryId, clientVersion) => (page, zpid) => {
-    return page.evaluate(async ({ zpid, queryId, clientVersion }) => {
-        zpid = +zpid || zpid;
-
-        const body = JSON.stringify({
-            operationName: 'ForSaleDoubleScrollFullRenderQuery',
-            variables: {
-                zpid,
-                contactFormRenderParameter: {
-                    zpid,
-                    platform: 'desktop',
-                    isDoubleScroll: true,
-                },
-            },
-            clientVersion,
-            queryId,
-        });
-
-        const resp = await fetch(`https://www.zillow.com/graphql/?zpid=${zpid}&contactFormRenderParameter=&queryId=${queryId}&operationName=ForSaleDoubleScrollFullRenderQuery`, {
-            method: 'POST',
-            body,
-            headers: {
-                dnt: '1',
-                accept: '*/*',
-                'content-type': 'text/plain',
-                origin: document.location.origin,
-                pragma: 'no-cache',
-                referer: `${document.location.origin}/`,
-            },
-            mode: 'cors',
-            credentials: 'include',
-        });
-
-        if (resp.status !== 200) {
-            throw new Error(`Got status ${resp.status} from GraphQL`);
-        }
-
-        return (await resp.blob()).text();
-    }, { zpid, queryId, clientVersion });
+    // evaluateQueryZpid is a separate function to avoid scope variables re-declaration (zpid, queryId, clientVersion)
+    return page.evaluate(evaluateQueryZpid, { zpid, queryId, clientVersion });
 };
 
 /**
@@ -466,7 +481,7 @@ const createQueryZpid = (queryId, clientVersion) => (page, zpid) => {
  *
  * @param {Record<string, boolean>} attributes
  */
-const createGetSimpleResult = (attributes) => (data) => {
+const createGetSimpleResult = (attributes) => (/** @type {any} */ data) => {
     /**
      * @type {Record<string, any>}
      */
@@ -476,16 +491,16 @@ const createGetSimpleResult = (attributes) => (data) => {
         return result;
     }
 
-    for (const key in attributes) {
+    Object.keys(attributes).forEach((key) => {
         if (key in data) { result[key] = data[key]; }
-    }
+    });
 
     if (result.hdpUrl) {
         result.url = `https://www.zillow.com${result.hdpUrl}`;
         delete result.hdpUrl;
     }
     if (result.hugePhotos) {
-        result.photos = result.hugePhotos.map((hp) => hp.url);
+        result.photos = result.hugePhotos.map((/** @type {{ url: String }} */ hp) => hp.url);
         delete result.hugePhotos;
     }
     return result;
@@ -514,7 +529,7 @@ const getUrlData = (url) => {
     if (nUrl.searchParams.has('searchQueryState')) {
         return {
             label: LABELS.QUERY,
-            searchQueryState: JSON.parse(nUrl.searchParams.get('searchQueryState')),
+            searchQueryState: JSON.parse(nUrl.searchParams.get('searchQueryState') || ''),
         };
     }
 
@@ -645,7 +660,7 @@ const extendFunction = async ({
 };
 
 /**
- * @param {*} value
+ * @param {string} value
  * @returns
  */
 const parseTimeUnit = (value) => {
@@ -717,7 +732,7 @@ const minMaxDates = ({ min, max }) => {
  */
 const patchLog = (crawler) => {
     const originalException = crawler.log.exception.bind(crawler.log);
-    crawler.log.exception = (...args) => {
+    crawler.log.exception = (/** @type {any[]} */ ...args) => {
         if (!args?.[1]?.includes('handleRequestFunction')) {
             originalException(...args);
         }
@@ -732,9 +747,11 @@ const patchLog = (crawler) => {
  * @param {Number} extra
  * @returns is over items bool result
  */
-const isOverItems = ({ zpids, input }, extra = 0) => (typeof input.maxItems === 'number' && input.maxItems > 0
-    ? (zpids.size + extra) >= input.maxItems
-    : false);
+const isOverItems = ({ zpids, input }, extra = 0) => {
+    return typeof input.maxItems === 'number' && input.maxItems > 0
+        ? zpids.size + extra >= input.maxItems
+        : false;
+};
 
 module.exports = {
     createGetSimpleResult,

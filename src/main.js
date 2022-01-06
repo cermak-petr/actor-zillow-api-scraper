@@ -2,7 +2,7 @@ const Apify = require('apify');
 const _ = require('lodash');
 const { LABELS, INITIAL_URL, URL_PATTERNS_TO_BLOCK } = require('./constants');
 const { PageHandler } = require('./page-handler');
-const { getExtendOutputFunction, getSimpleResultFunction, validateInput, initializeMinMaxDate, getInitializedStartUrls, getInitilizedHeaderGenerator } = require('./initialization');
+const { getExtendOutputFunction, getSimpleResultFunction, validateInput, getInitializedStartUrls, getInitializedBrowserPool } = require('./initialization');
 const fns = require('./functions');
 
 const {
@@ -10,6 +10,7 @@ const {
     proxyConfiguration,
     getUrlData,
     extendFunction,
+    minMaxDates,
 } = fns;
 
 const { log, puppeteer } = Apify.utils;
@@ -38,7 +39,7 @@ Apify.main(async () => {
         proxyConfig.countryCode = 'US';
     }
 
-    const minMaxDate = initializeMinMaxDate(input);
+    const minMaxDate = minMaxDates(input);
 
     const getSimpleResult = getSimpleResultFunction(input);
 
@@ -61,9 +62,10 @@ Apify.main(async () => {
     const startUrls = await getInitializedStartUrls(input);
 
     /**
-     * @type {ReturnType<typeof createQueryZpid>}
+     * @type {ReturnType<typeof createQueryZpid> | null}
      */
     let queryZpid = null;
+
     /**
      * @type {any}
      */
@@ -114,12 +116,32 @@ Apify.main(async () => {
         label: 'SETUP',
     });
 
-    const headerGenerator = getInitilizedHeaderGenerator();
-
     let isFinishing = false;
 
+    /**
+     * browserPool is initialized separately before crawler's initialization because
+     * preLaunchHooks and postPageCloseHooks are not recognized as valid properties
+     * of browserPoolOptions inside PuppeteerCrawler's constructor (whole blocks
+     * of preLaunchHooks and postPageCloseHooks are marked as warnings by tslint).
+     */
+
+    /**
+     * crawlerWrapper is used because preLaunchHooks work with crawler instance which hasn't yet been initialized
+     * @type {{ crawler: Apify.PuppeteerCrawler | null }}
+     */
+    const crawlerWrapper = { crawler: null };
+    const browserPool = getInitializedBrowserPool(input, queryZpid, crawlerWrapper);
+
+    /**
+     * browserPoolOptions = { ...browserPool } is not valid in this context,
+     * we need to specify only a subset of properties that should be used in browserPoolOptions
+     * (with browserPoolOptions = { ...browserPool } it fails in PuppeteerCrawler's constructor)
+     */
+    const { preLaunchHooks, postPageCloseHooks, browserPlugins, maxOpenPagesPerBrowser, useFingerprints } = browserPool;
+    const browserPoolOptions = { maxOpenPagesPerBrowser, useFingerprints, browserPlugins, preLaunchHooks, postPageCloseHooks };
+
     // Create crawler
-    const crawler = new Apify.PuppeteerCrawler({
+    crawlerWrapper.crawler = new Apify.PuppeteerCrawler({
         requestQueue,
         maxRequestRetries: input.maxRetries || 20,
         handlePageTimeoutSecs: !queryZpid
@@ -135,12 +157,6 @@ Apify.main(async () => {
         proxyConfiguration: proxyConfig,
         preNavigationHooks: [async ({ request, page }, gotoOptions) => {
             /** @type {any} */
-            const headers = headerGenerator.getHeaders();
-            const userAgent = headers['user-agent'];
-            log.debug(`User-agent: ${userAgent}`);
-
-            await page.setUserAgent(userAgent);
-
             await puppeteer.blockRequests(page, {
                 urlPatterns: URL_PATTERNS_TO_BLOCK.concat(request.userData.label === LABELS.DETAIL ? [
                     'maps.googleapis.com',
@@ -165,34 +181,16 @@ Apify.main(async () => {
             if (isOverItems() && !isFinishing) {
                 isFinishing = true;
                 log.info('Reached maximum items, waiting for finish');
-                await Promise.all([
-                    crawler.autoscaledPool.pause(),
-                    crawler.autoscaledPool.resolve(),
-                ]);
+                if (crawlerWrapper.crawler && crawlerWrapper.crawler.autoscaledPool) {
+                    await Promise.all([
+                        crawlerWrapper.crawler.autoscaledPool.pause(),
+                        // @ts-ignore
+                        crawlerWrapper.crawler.autoscaledPool.resolve(),
+                    ]);
+                }
             }
         }],
-        browserPoolOptions: {
-            maxOpenPagesPerBrowser: 1,
-            preLaunchHooks: [async (_pageId, launchContext) => {
-                launchContext.launchOptions = {
-                    ...launchContext.launchOptions,
-                    bypassCSP: true,
-                    ignoreHTTPSErrors: true,
-                    devtools: input.debugLog,
-                    headless: false,
-                };
-
-                if (queryZpid !== null) {
-                    fns.changeHandlePageTimeout(crawler, input.handlePageTimeoutSecs || 3600);
-                }
-            }],
-            postPageCloseHooks: [async (/** @type {any} */ _pageId, /** @type {any} */ browserController) => {
-                if (!browserController?.launchContext?.session?.isUsable()) {
-                    log.debug('Session is not usable');
-                    await browserController.close();
-                }
-            }],
-        },
+        browserPoolOptions,
         maxConcurrency: !queryZpid ? 1 : 10,
         handlePageFunction: async ({ page, request, crawler: { autoscaledPool }, session, response, proxyInfo }) => {
             const context = { page, request, crawler: { requestQueue, autoscaledPool }, session, response, proxyInfo };
@@ -243,6 +241,8 @@ Apify.main(async () => {
             log.exception(error, `\n\nRequest ${request.url} failed too many times.\n\n`);
         },
     });
+
+    const { crawler } = crawlerWrapper;
 
     if (!isDebug) {
         fns.patchLog(crawler);

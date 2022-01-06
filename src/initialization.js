@@ -1,17 +1,16 @@
 const Apify = require('apify');
 const _ = require('lodash');
-const HeaderGenerator = require('header-generator');
+const { BrowserPool, PuppeteerPlugin } = require('browser-pool');
 const { TYPES, LABELS } = require('./constants');
 
 const fns = require('./functions');
 
-const { utils: { log } } = Apify;
+const { utils: { log, puppeteer } } = Apify;
 
 const {
     getUrlData,
     extendFunction,
     isOverItems,
-    minMaxDates,
     // eslint-disable-next-line no-unused-vars
     createGetSimpleResult,
 } = fns;
@@ -24,18 +23,6 @@ const validateInput = (input) => {
     if (!(input.search && input.search.trim().length > 0) && !input.startUrls && !input.zpids) {
         throw new Error('Either "search", "startUrls" or "zpids" attribute has to be set!');
     }
-};
-
-/**
- *
- * @param {{ minDate: string, maxDate: string }} input
- * @returns minMaxDate
- */
-const initializeMinMaxDate = ({ minDate, maxDate }) => {
-    return minMaxDates({
-        min: minDate,
-        max: maxDate,
-    });
 };
 
 /**
@@ -70,10 +57,14 @@ const getInitializedStartUrls = async (input) => {
 
         const requestList = await Apify.openRequestList('STARTURLS', input.startUrls);
 
+        /**
+         * requestList.fetchNextRequest() gets Request object from requestsFromUrl property
+         * which holds start url parsed by RequestList
+         */
         let req;
         while (req = await requestList.fetchNextRequest()) { // eslint-disable-line no-cond-assign
             if (!req.url.includes('zillow.com')) {
-                throw new Error(`Invalid startUrl ${req.url}`);
+                throw new Error(`Invalid startUrl ${req.url}. Url must start with: https://www.zillow.com`);
             }
 
             startUrls.push({
@@ -96,18 +87,40 @@ const getInitializedStartUrls = async (input) => {
     return startUrls;
 };
 
-const getInitilizedHeaderGenerator = () => {
-    return new HeaderGenerator({
-        browsers: [
-            { name: 'chrome', minVersion: 87 },
-        ],
-        devices: [
-            'desktop',
-        ],
-        operatingSystems: process.platform === 'win32'
-            ? ['windows']
-            : ['linux'],
+/**
+ *
+ * @param {{ debugLog: boolean, handlePageTimeoutSecs: any}} input
+ * @param {ReturnType<typeof fns.createQueryZpid> | null} queryZpid
+ * @param {{crawler: Apify.PuppeteerCrawler | null}} crawlerWrapper
+ * @returns initialized browser pool
+ */
+const getInitializedBrowserPool = (input, queryZpid, { crawler }) => {
+    const browserPool = new BrowserPool({
+        browserPlugins: [new PuppeteerPlugin(puppeteer)],
+        maxOpenPagesPerBrowser: 1,
+        useFingerprints: true,
+        preLaunchHooks: [async (/** @type {any} */ _pageId, /** @type {{ launchOptions: any; }} */ launchContext) => {
+            launchContext.launchOptions = {
+                ...launchContext.launchOptions,
+                bypassCSP: true,
+                ignoreHTTPSErrors: true,
+                devtools: input.debugLog,
+                headless: false,
+            };
+
+            if (queryZpid !== null) {
+                fns.changeHandlePageTimeout(crawler, input.handlePageTimeoutSecs || 3600);
+            }
+        }],
+        postPageCloseHooks: [async (/** @type {any} */ _pageId, /** @type {any} */ browserController) => {
+            if (!browserController?.launchContext?.session?.isUsable()) {
+                log.debug('Session is not usable');
+                await browserController.close();
+            }
+        }],
     });
+
+    return browserPool;
 };
 
 /**
@@ -278,9 +291,8 @@ const getSimpleResultFunction = (input) => {
 
 module.exports = {
     validateInput,
-    initializeMinMaxDate,
     getInitializedStartUrls,
-    getInitilizedHeaderGenerator,
+    getInitializedBrowserPool,
     getSimpleResultFunction,
     getExtendOutputFunction,
 };

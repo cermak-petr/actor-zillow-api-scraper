@@ -64,7 +64,7 @@ class PageHandler {
 
     /**
      *
-     * @param {ReturnType<typeof createQueryZpid>} queryZpid
+     * @param {ReturnType<typeof createQueryZpid> | null } queryZpid
      * @param {Array<Apify.RequestOptions>} startUrls
      * @returns queryZpid
      */
@@ -209,7 +209,7 @@ class PageHandler {
 
     /**
      *
-     * @param {String} label
+     * @param {string} label
      * @param {ReturnType<typeof createQueryZpid>} queryZpid
      * @returns
      */
@@ -314,9 +314,9 @@ class PageHandler {
 
     isOverItems(extra = 0) {
         const { zpids, input } = this.globalContext;
-        return (typeof input.maxItems === 'number' && input.maxItems > 0
-            ? (zpids.size + extra) >= input.maxItems
-            : false);
+        return typeof input.maxItems === 'number' && input.maxItems > 0
+            ? zpids.size + extra >= input.maxItems
+            : false;
     }
 
     foundAnyErrors() {
