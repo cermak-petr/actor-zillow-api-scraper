@@ -1,11 +1,10 @@
 const Apify = require('apify');
 const _ = require('lodash');
-const { BrowserPool, PuppeteerPlugin } = require('browser-pool');
 const { TYPES, LABELS } = require('./constants');
 
 const fns = require('./functions');
 
-const { utils: { log, puppeteer } } = Apify;
+const { utils: { log } } = Apify;
 
 const {
     getUrlData,
@@ -92,35 +91,31 @@ const getInitializedStartUrls = async (input) => {
  * @param {{ debugLog: boolean, handlePageTimeoutSecs: any}} input
  * @param {ReturnType<typeof fns.createQueryZpid> | null} queryZpid
  * @param {{crawler: Apify.PuppeteerCrawler | null}} crawlerWrapper
- * @returns initialized browser pool
+ * @returns initialized preLaunchHooks
  */
-const getInitializedBrowserPool = (input, queryZpid, { crawler }) => {
-    const browserPool = new BrowserPool({
-        browserPlugins: [new PuppeteerPlugin(puppeteer)],
-        maxOpenPagesPerBrowser: 1,
-        useFingerprints: true,
-        preLaunchHooks: [async (/** @type {any} */ _pageId, /** @type {{ launchOptions: any; }} */ launchContext) => {
-            launchContext.launchOptions = {
-                ...launchContext.launchOptions,
-                bypassCSP: true,
-                ignoreHTTPSErrors: true,
-                devtools: input.debugLog,
-                headless: false,
-            };
+const initializePreLaunchHooks = (input, queryZpid, { crawler }) => {
+    return [async (/** @type {any} */ _pageId, /** @type {{ launchOptions: any; }} */ launchContext) => {
+        launchContext.launchOptions = {
+            ...launchContext.launchOptions,
+            bypassCSP: true,
+            ignoreHTTPSErrors: true,
+            devtools: input.debugLog,
+            headless: false,
+        };
 
-            if (queryZpid !== null) {
-                fns.changeHandlePageTimeout(crawler, input.handlePageTimeoutSecs || 3600);
-            }
-        }],
-        postPageCloseHooks: [async (/** @type {any} */ _pageId, /** @type {any} */ browserController) => {
-            if (!browserController?.launchContext?.session?.isUsable()) {
-                log.debug('Session is not usable');
-                await browserController.close();
-            }
-        }],
-    });
+        if (queryZpid !== null) {
+            fns.changeHandlePageTimeout(crawler, input.handlePageTimeoutSecs || 3600);
+        }
+    }];
+};
 
-    return browserPool;
+const initializePostPageCloseHooks = () => {
+    return [async (/** @type {any} */ _pageId, /** @type {any} */ browserController) => {
+        if (!browserController?.launchContext?.session?.isUsable()) {
+            log.debug('Session is not usable');
+            await browserController.close();
+        }
+    }];
 };
 
 /**
@@ -292,7 +287,8 @@ const getSimpleResultFunction = (input) => {
 module.exports = {
     validateInput,
     getInitializedStartUrls,
-    getInitializedBrowserPool,
+    initializePreLaunchHooks,
+    initializePostPageCloseHooks,
     getSimpleResultFunction,
     getExtendOutputFunction,
 };

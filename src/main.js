@@ -1,8 +1,9 @@
 const Apify = require('apify');
 const _ = require('lodash');
+const { PuppeteerPlugin } = require('browser-pool');
 const { LABELS, INITIAL_URL, URL_PATTERNS_TO_BLOCK } = require('./constants');
 const { PageHandler } = require('./page-handler');
-const { getExtendOutputFunction, getSimpleResultFunction, validateInput, getInitializedStartUrls, getInitializedBrowserPool } = require('./initialization');
+const { getExtendOutputFunction, getSimpleResultFunction, validateInput, getInitializedStartUrls, initializePreLaunchHooks, initializePostPageCloseHooks } = require('./initialization');
 const fns = require('./functions');
 
 const {
@@ -126,19 +127,19 @@ Apify.main(async () => {
      */
 
     /**
-     * crawlerWrapper is used because preLaunchHooks work with crawler instance which hasn't yet been initialized
+     * crawlerWrapper is used because preLaunchHooks initialization requires
+     * crawler instance which hasn't yet been initialized
      * @type {{ crawler: Apify.PuppeteerCrawler | null }}
      */
     const crawlerWrapper = { crawler: null };
-    const browserPool = getInitializedBrowserPool(input, queryZpid, crawlerWrapper);
 
-    /**
-     * browserPoolOptions = { ...browserPool } is not valid in this context,
-     * we need to specify only a subset of properties that should be used in browserPoolOptions
-     * (with browserPoolOptions = { ...browserPool } it fails in PuppeteerCrawler's constructor)
-     */
-    const { preLaunchHooks, postPageCloseHooks, browserPlugins, maxOpenPagesPerBrowser, useFingerprints } = browserPool;
-    const browserPoolOptions = { maxOpenPagesPerBrowser, useFingerprints, browserPlugins, preLaunchHooks, postPageCloseHooks };
+    const browserPoolOptions = {
+        browserPlugins: [new PuppeteerPlugin(puppeteer)],
+        maxOpenPagesPerBrowser: 1,
+        useFingerprints: true,
+        preLaunchHooks: initializePreLaunchHooks(input, queryZpid, crawlerWrapper),
+        postPageCloseHooks: initializePostPageCloseHooks(),
+    };
 
     // Create crawler
     crawlerWrapper.crawler = new Apify.PuppeteerCrawler({
