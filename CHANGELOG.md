@@ -1,5 +1,25 @@
-## 2021-12-03
+## 2022-01-07
 
+Features:
+- Add pagination search inspecting listing results (more items scraped while testing) 
+- Use pagination search for all pages (with properties <= 500, > 500 ) for more results
+
+Bug fixes:
+- Fix query states fetch request (map results weren't loaded properly)
+- Remove residential proxies recommendation
+- Use map splitting only for results > 500
+
+Dev:
+- Refactor code (split `main` function, `handlePageFuntion`)
+- Update to SDK v2.2
+- Replace header generator for user-agent with SDK built-in fingerprints support
+- Handle most of the tslint warnings
+
+## 2021-12-01
+
+Bug fixes:
+- Handle request blocking by retrying requests with 0 results found
+- Increase number of dataset results by forcing map splitting for results < 500
 
 ## 2021-08-03
 
