@@ -1,12 +1,11 @@
 const Apify = require('apify');
 const moment = require('moment');
-const _ = require('lodash');
 const Puppeteer = require('puppeteer'); // eslint-disable-line no-unused-vars
 const { createHash } = require('crypto');
 const vm = require('vm');
-const { TYPES, LABELS } = require('./constants');
+const { LABELS, TYPES } = require('./constants'); // eslint-disable-line no-unused-vars
 
-const { sleep, log, requestAsBrowser } = Apify.utils;
+const { log, requestAsBrowser } = Apify.utils;
 
 const mappings = {
     att: 'keywords',
@@ -82,7 +81,7 @@ const mappings = {
  */
 const translateQsToFilter = (qs) => {
     if (!qs) {
-        return {};
+        return { filterState: {} };
     }
 
     qs.filterState = Object.entries(qs.filterState).reduce((out, [key, value]) => {
@@ -188,13 +187,15 @@ const proxyConfiguration = async ({
 /**
  * Patch the crawler instance for new timeouts
  *
- * @param {Apify.BrowserCrawler} crawler
+ * @param {Apify.BrowserCrawler | null} crawler
  * @param {number} handlePageTimeoutSecs
  */
 const changeHandlePageTimeout = (crawler, handlePageTimeoutSecs) => {
-    crawler.handlePageTimeoutSecs = handlePageTimeoutSecs;
-    crawler.handlePageTimeoutMillis = handlePageTimeoutSecs * 1000;
-    crawler.handleRequestTimeoutMillis = crawler.handlePageTimeoutMillis;
+    if (crawler) {
+        crawler.handlePageTimeoutSecs = handlePageTimeoutSecs;
+        crawler.handlePageTimeoutMillis = handlePageTimeoutSecs * 1000;
+        crawler.handleRequestTimeoutMillis = crawler.handlePageTimeoutMillis;
+    }
 };
 
 /**
@@ -269,6 +270,61 @@ const splitQueryState = (queryState) => {
 };
 
 /**
+ * @param {{ filterState: Record<string, any> }} qs
+ * @param {keyof TYPES} type
+ * @returns filter states
+ */
+const getQueryFilterStates = (qs, type) => {
+    /**
+     * Filter state must follow the exact format corresponding
+     * to the Zillow API. False values cannot be ommited and
+     * the exact number of query parameters has to be preserved.
+     * Otherwise the request returns both list and map results empty.
+     */
+
+    const rentSoldCommonFilters = {
+        isAllHomes: { value: true },
+        isForSaleByAgent: { value: false },
+        isForSaleByOwner: { value: false },
+        isNewConstruction: { value: false },
+        isComingSoon: { value: false },
+        isAuction: { value: false },
+        isForSaleForeclosure: { value: false },
+    };
+
+    const typeFilters = {
+        sale: [{
+            isAllHomes: { value: true },
+        }],
+        fsbo: [{
+            isAllHomes: { value: true },
+            isForSaleByOwner: { value: true },
+        }],
+        rent: [{
+            isForRent: { value: true },
+            ...rentSoldCommonFilters,
+        }],
+        sold: [{
+            isRecentlySold: { value: true },
+            ...rentSoldCommonFilters,
+        }],
+        /** @type {Array<any>} */
+        all: [],
+        /** qs is processed in translateQsToFilter (it comes from request.userData.searchQueryState), not from input.type) */
+        qs: [qs.filterState],
+    };
+
+    /**
+     * Zillow doesn't provide 'all' option at the moment,
+     * for-sale and for-rent listings have different base url.
+     * To extract all items, separate requests need to be sent.
+     */
+    typeFilters.all.push(...typeFilters.sale, ...typeFilters.rent); // TODO: should typeFilters.sold be included in typeFilters.all?
+
+    return typeFilters[type];
+};
+
+/**
  * Make API query for all ZPIDs in map reqion
  * @param {{
  *  qs: { filterState: any },
@@ -276,60 +332,7 @@ const splitQueryState = (queryState) => {
  *  cat: 'cat1' | 'cat2'
  * }} queryState
  */
-const queryRegionHomes = async ({ qs, type, cat = 'cat1' }) => {
-    if (type === 'rent') {
-        qs.filterState = {
-            isForSaleByAgent: { value: false },
-            isForSaleByOwner: { value: false },
-            isNewConstruction: { value: false },
-            isForSaleForeclosure: { value: false },
-            isComingSoon: { value: false },
-            isAuction: { value: false },
-            isPreMarketForeclosure: { value: false },
-            isPreMarketPreForeclosure: { value: false },
-            isForRent: { value: true },
-        };
-    } else if (type === 'fsbo') {
-        qs.filterState = {
-            isForSaleByAgent: { value: false },
-            isForSaleByOwner: { value: true },
-            isNewConstruction: { value: false },
-            isForSaleForeclosure: { value: false },
-            isComingSoon: { value: false },
-            isAuction: { value: false },
-            isPreMarketForeclosure: { value: false },
-            isPreMarketPreForeclosure: { value: false },
-            isForRent: { value: false },
-        };
-    } else if (type === 'sold') {
-        qs.filterState = {
-            sortSelection: { value: 'globalrelevanceex' },
-            isAllHomes: { value: true },
-            isRecentlySold: { value: true },
-            isForSaleByAgent: { value: false },
-            isForSaleByOwner: { value: false },
-            isNewConstruction: { value: false },
-            isComingSoon: { value: false },
-            isAuction: { value: false },
-            isForSaleForeclosure: { value: false },
-            isPreMarketForeclosure: { value: false },
-            isPreMarketPreForeclosure: { value: false },
-        };
-    } else if (type === 'all') {
-        qs.filterState = {
-            isPreMarketForeclosure: { value: true },
-            isForSaleForeclosure: { value: true },
-            sortSelection: { value: 'globalrelevanceex' },
-            isAuction: { value: true },
-            isNewConstruction: { value: true },
-            isRecentlySold: { value: true },
-            isForSaleByOwner: { value: true },
-            isComingSoon: { value: true },
-            isPreMarketPreForeclosure: { value: true },
-            isForSaleByAgent: { value: true },
-        };
-    }
-
+const queryRegionHomes = async ({ qs, cat = 'cat1' }) => {
     const wants = {
         [cat]: ['listResults', 'mapResults'],
     };
@@ -358,6 +361,110 @@ const queryRegionHomes = async ({ qs, type, cat = 'cat1' }) => {
 };
 
 /**
+ *
+ * @param {Apify.Request} request
+ * @param {keyof TYPES} inputType
+ * @param {Puppeteer.Page} page
+ * @param {any} pageQs
+ * @param {Number} paginationPage
+ * @returns query states with total count
+ */
+const extractQueryStates = async (request, inputType, page, pageQs, paginationPage = 1) => {
+    /** @type { { states: Array<any>, totalCount: Number } } */
+    const queryStates = {
+        states: [],
+        totalCount: 0,
+    };
+
+    const type = request.userData.searchQueryState ? 'qs' : inputType;
+    const qs = translateQsToFilter(request.userData.searchQueryState || pageQs.queryState);
+    qs.pagination = { currentPage: paginationPage };
+
+    const filterStates = getQueryFilterStates(qs, type);
+
+    const listingTypes = ['cat1', 'cat2']; // cat1 = agents listings, cat2 = other listings
+    for (const cat of listingTypes) {
+        const wants = {
+            [cat]: ['listResults', 'mapResults'],
+        };
+
+        for (const filterState of filterStates) {
+            qs.filterState = filterState;
+            const url = `https://www.zillow.com/search/GetSearchPageState.htm?searchQueryState=${JSON.stringify(qs)}&wants=${JSON.stringify(wants)}&requestId=${Math.floor(Math.random() * 70) + 1}`;
+            log.debug(`Fetching url: ${url}`);
+
+            const result = await page.evaluate(
+                queryRegionHomes,
+                {
+                    qs: translateQsToFilter(request.userData.searchQueryState || pageQs.queryState),
+                    cat,
+                },
+            );
+
+            log.debug('query', result.qs);
+
+            const searchState = JSON.parse(result.body);
+            queryStates.states.push({ qs, searchState });
+
+            if (log.getLevel() === log.LEVELS.DEBUG) {
+                await Apify.setValue('SEARCH_STATE', searchState);
+            }
+
+            queryStates.totalCount += searchState?.categoryTotals?.[cat]?.totalResultCount ?? 0;
+        }
+    }
+
+    return queryStates;
+};
+
+/**
+ *
+ * @param { {
+ *      zpid: any,
+ *      queryId: any,
+ *      clientVersion: any} } requestParams
+ * @returns
+ */
+const evaluateQueryZpid = async ({ zpid, queryId, clientVersion }) => {
+    zpid = +zpid || zpid;
+
+    const body = JSON.stringify({
+        operationName: 'ForSaleDoubleScrollFullRenderQuery',
+        variables: {
+            zpid,
+            contactFormRenderParameter: {
+                zpid,
+                platform: 'desktop',
+                isDoubleScroll: true,
+            },
+        },
+        clientVersion,
+        queryId,
+    });
+
+    const resp = await fetch(`https://www.zillow.com/graphql/?zpid=${zpid}&contactFormRenderParameter=&queryId=${queryId}&operationName=ForSaleDoubleScrollFullRenderQuery`, {
+        method: 'POST',
+        body,
+        headers: {
+            dnt: '1',
+            accept: '*/*',
+            'content-type': 'text/plain',
+            origin: document.location.origin,
+            pragma: 'no-cache',
+            referer: `${document.location.origin}/`,
+        },
+        mode: 'cors',
+        credentials: 'include',
+    });
+
+    if (resp.status !== 200) {
+        throw new Error(`Got status ${resp.status} from GraphQL`);
+    }
+
+    return (await resp.blob()).text();
+};
+
+/**
  * Make API query for home data by ZPID. Needs to be initialized from createInterceptQueryId
  *
  * @param {string} queryId
@@ -365,44 +472,8 @@ const queryRegionHomes = async ({ qs, type, cat = 'cat1' }) => {
  * @returns {(page: Puppeteer.Page, zpid: string) => Promise<any>}
  */
 const createQueryZpid = (queryId, clientVersion) => (page, zpid) => {
-    return page.evaluate(async ({ zpid, queryId, clientVersion }) => {
-        zpid = +zpid || zpid;
-
-        const body = JSON.stringify({
-            operationName: 'ForSaleDoubleScrollFullRenderQuery',
-            variables: {
-                zpid,
-                contactFormRenderParameter: {
-                    zpid,
-                    platform: 'desktop',
-                    isDoubleScroll: true,
-                },
-            },
-            clientVersion,
-            queryId,
-        });
-
-        const resp = await fetch(`https://www.zillow.com/graphql/?zpid=${zpid}&contactFormRenderParameter=&queryId=${queryId}&operationName=ForSaleDoubleScrollFullRenderQuery`, {
-            method: 'POST',
-            body,
-            headers: {
-                dnt: '1',
-                accept: '*/*',
-                'content-type': 'text/plain',
-                origin: document.location.origin,
-                pragma: 'no-cache',
-                referer: `${document.location.origin}/`,
-            },
-            mode: 'cors',
-            credentials: 'include',
-        });
-
-        if (resp.status !== 200) {
-            throw new Error(`Got status ${resp.status} from GraphQL`);
-        }
-
-        return (await resp.blob()).text();
-    }, { zpid, queryId, clientVersion });
+    // evaluateQueryZpid is a separate function to avoid scope variables re-declaration (zpid, queryId, clientVersion)
+    return page.evaluate(evaluateQueryZpid, { zpid, queryId, clientVersion });
 };
 
 /**
@@ -410,7 +481,7 @@ const createQueryZpid = (queryId, clientVersion) => (page, zpid) => {
  *
  * @param {Record<string, boolean>} attributes
  */
-const createGetSimpleResult = (attributes) => (data) => {
+const createGetSimpleResult = (attributes) => (/** @type {any} */ data) => {
     /**
      * @type {Record<string, any>}
      */
@@ -420,16 +491,16 @@ const createGetSimpleResult = (attributes) => (data) => {
         return result;
     }
 
-    for (const key in attributes) {
+    Object.keys(attributes).forEach((key) => {
         if (key in data) { result[key] = data[key]; }
-    }
+    });
 
     if (result.hdpUrl) {
         result.url = `https://www.zillow.com${result.hdpUrl}`;
         delete result.hdpUrl;
     }
     if (result.hugePhotos) {
-        result.photos = result.hugePhotos.map((hp) => hp.url);
+        result.photos = result.hugePhotos.map((/** @type {{ url: String }} */ hp) => hp.url);
         delete result.hugePhotos;
     }
     return result;
@@ -458,7 +529,7 @@ const getUrlData = (url) => {
     if (nUrl.searchParams.has('searchQueryState')) {
         return {
             label: LABELS.QUERY,
-            searchQueryState: JSON.parse(nUrl.searchParams.get('searchQueryState')),
+            searchQueryState: JSON.parse(nUrl.searchParams.get('searchQueryState') || ''),
         };
     }
 
@@ -589,7 +660,7 @@ const extendFunction = async ({
 };
 
 /**
- * @param {*} value
+ * @param {string} value
  * @returns
  */
 const parseTimeUnit = (value) => {
@@ -661,18 +732,32 @@ const minMaxDates = ({ min, max }) => {
  */
 const patchLog = (crawler) => {
     const originalException = crawler.log.exception.bind(crawler.log);
-    crawler.log.exception = (...args) => {
+    crawler.log.exception = (/** @type {any[]} */ ...args) => {
         if (!args?.[1]?.includes('handleRequestFunction')) {
             originalException(...args);
         }
     };
 };
 
+/**
+ * @param {{
+ *  zpids: Set<any>,
+ *  input: { maxItems: Number},
+ * }} globalContext
+ * @param {Number} extra
+ * @returns is over items bool result
+ */
+const isOverItems = ({ zpids, input }, extra = 0) => {
+    return typeof input.maxItems === 'number' && input.maxItems > 0
+        ? zpids.size + extra >= input.maxItems
+        : false;
+};
+
 module.exports = {
     createGetSimpleResult,
     createQueryZpid,
     interceptQueryId,
-    queryRegionHomes,
+    extractQueryStates,
     splitQueryState,
     extendFunction,
     proxyConfiguration,
@@ -681,6 +766,6 @@ module.exports = {
     makeInputBackwardsCompatible,
     minMaxDates,
     patchLog,
-    translateQsToFilter,
     changeHandlePageTimeout,
+    isOverItems,
 };

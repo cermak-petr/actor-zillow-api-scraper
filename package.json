@@ -2,15 +2,16 @@
     "name": "actor-zillow-api",
     "version": "0.0.1",
     "dependencies": {
-        "apify": "^2.0.1",
-        "lodash": "^4.17.21",
+        "apify": "^2.2.0",
+        "browser-pool": "^3.1.0",
         "header-generator": "^1.0.0",
-        "puppeteer": "*",
-        "moment": "^2.29.1"
+        "lodash": "^4.17.21",
+        "moment": "^2.29.1",
+        "puppeteer": "*"
     },
     "devDependencies": {
-        "@types/lodash": "^4.14.171",
         "@apify/eslint-config": "^0.1.4",
+        "@types/lodash": "^4.14.171",
         "eslint": "^7.31.0"
     },
     "scripts": {
