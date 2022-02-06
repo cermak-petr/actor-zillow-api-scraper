@@ -1,7 +1,12 @@
+## 2022-02-06
+
+Fix:
+- Photos
+
 ## 2022-01-07
 
 Features:
-- Add pagination search inspecting listing results (more items scraped while testing) 
+- Add pagination search inspecting listing results (more items scraped while testing)
 - Use pagination search for all pages (with properties <= 500, > 500 ) for more results
 
 Bug fixes:

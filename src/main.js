@@ -1,6 +1,4 @@
 const Apify = require('apify');
-const _ = require('lodash');
-const { PuppeteerPlugin } = require('browser-pool');
 const { LABELS, INITIAL_URL, URL_PATTERNS_TO_BLOCK } = require('./constants');
 const { PageHandler } = require('./page-handler');
 const { getExtendOutputFunction, getSimpleResultFunction, validateInput, getInitializedStartUrls, initializePreLaunchHooks, initializePostPageCloseHooks } = require('./initialization');
@@ -106,7 +104,6 @@ Apify.main(async () => {
             },
             getSimpleResult,
             zpids: globalContext.zpids,
-            _,
             fns,
             extendOutputFunction,
             minMaxDate,
@@ -134,8 +131,6 @@ Apify.main(async () => {
     const crawlerWrapper = { crawler: null };
 
     const browserPoolOptions = {
-        browserPlugins: [new PuppeteerPlugin(puppeteer)],
-        maxOpenPagesPerBrowser: 1,
         useFingerprints: true,
         preLaunchHooks: initializePreLaunchHooks(input, queryZpid, crawlerWrapper),
         postPageCloseHooks: initializePostPageCloseHooks(),

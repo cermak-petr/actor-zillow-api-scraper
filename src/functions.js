@@ -3,9 +3,10 @@ const moment = require('moment');
 const Puppeteer = require('puppeteer'); // eslint-disable-line no-unused-vars
 const { createHash } = require('crypto');
 const vm = require('vm');
-const { LABELS, TYPES } = require('./constants'); // eslint-disable-line no-unused-vars
+const { gotScraping } = require('got-scraping');
+const { LABELS, TYPES, ORIGIN } = require('./constants'); // eslint-disable-line no-unused-vars
 
-const { log, requestAsBrowser } = Apify.utils;
+const { log } = Apify.utils;
 
 const mappings = {
     att: 'keywords',
@@ -217,10 +218,10 @@ const interceptQueryId = async (page, proxy) => {
             throw new Error('src is missing');
         }
 
-        const response = await requestAsBrowser({
+        const response = await gotScraping({
             url: src,
             proxyUrl: proxy.url,
-            abortFunction: () => false,
+            responseType: 'text',
         });
 
         if (!response) {
@@ -499,9 +500,9 @@ const createGetSimpleResult = (attributes) => (/** @type {any} */ data) => {
         result.url = `https://www.zillow.com${result.hdpUrl}`;
         delete result.hdpUrl;
     }
-    if (result.hugePhotos) {
-        result.photos = result.hugePhotos.map((/** @type {{ url: String }} */ hp) => hp.url);
-        delete result.hugePhotos;
+    if (result.responsivePhotos) {
+        result.photos = result.responsivePhotos.map((/** @type {{ url: String }} */ hp) => hp.url);
+        delete result.responsivePhotos;
     }
     return result;
 };

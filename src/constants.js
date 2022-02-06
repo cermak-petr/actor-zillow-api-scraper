@@ -73,6 +73,8 @@ const URL_PATTERNS_TO_BLOCK = [
     'api.rlcdn.com',
 ];
 
+const ORIGIN = 'https://www.zillow.com/';
+
 module.exports = {
     LABELS,
     TYPES,
@@ -80,4 +82,5 @@ module.exports = {
     RESULTS_LIMIT,
     PAGES_LIMIT,
     URL_PATTERNS_TO_BLOCK,
+    ORIGIN,
 };

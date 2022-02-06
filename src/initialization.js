@@ -1,5 +1,4 @@
 const Apify = require('apify');
-const _ = require('lodash');
 const { TYPES, LABELS } = require('./constants');
 
 const fns = require('./functions');
@@ -102,6 +101,7 @@ const initializePreLaunchHooks = (input, queryZpid, { crawler }) => {
             devtools: input.debugLog,
             headless: false,
         };
+        launchContext.useIncognitoPages = true;
 
         if (queryZpid !== null) {
             fns.changeHandlePageTimeout(crawler, input.handlePageTimeoutSecs || 3600);
@@ -111,10 +111,12 @@ const initializePreLaunchHooks = (input, queryZpid, { crawler }) => {
 
 const initializePostPageCloseHooks = () => {
     return [async (/** @type {any} */ _pageId, /** @type {any} */ browserController) => {
-        if (!browserController?.launchContext?.session?.isUsable()) {
-            log.debug('Session is not usable');
-            await browserController.close();
-        }
+        try {
+            if (browserController?.launchContext?.session?.isUsable() === false) {
+                log.debug('Session is not usable');
+                await browserController.close();
+            }
+        } catch (e) {}
     }];
 };
 
@@ -140,7 +142,7 @@ const getExtendOutputFunction = async ({ zpids, input }, minMaxDate, getSimpleRe
                 return false;
             }
 
-            if (!_.get(data, 'zpid')) {
+            if (!data?.zpid) {
                 return false;
             }
 
@@ -178,7 +180,6 @@ const getExtendOutputFunction = async ({ zpids, input }, minMaxDate, getSimpleRe
         helpers: {
             getUrlData,
             getSimpleResult,
-            _,
             zpids,
             minMaxDate,
             TYPES,
@@ -211,7 +212,7 @@ const getSimpleResultFunction = (input) => {
         livingArea: true,
         currency: true,
         hdpUrl: true,
-        hugePhotos: true,
+        responsivePhotos: true,
     };
 
     const getSimpleResult = createGetSimpleResult(

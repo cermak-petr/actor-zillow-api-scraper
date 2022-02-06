@@ -1,6 +1,5 @@
 const Apify = require('apify');
 const { sleep } = require('apify/build/utils');
-const _ = require('lodash');
 
 const Puppeteer = require('puppeteer'); // eslint-disable-line no-unused-vars
 const { LABELS, TYPES, RESULTS_LIMIT, PAGES_LIMIT } = require('./constants'); // eslint-disable-line no-unused-vars
@@ -123,7 +122,7 @@ class PageHandler {
             }
 
             // legacy layout, need re-enqueue
-            const zpid = _.get(nextData, 'props.initialData.building.zpid');
+            const zpid = nextData?.props?.initialData?.building?.zpid;
 
             if (zpid) {
                 const url = `https://www.zillow.com/homedetails/${zpid}_zpid/`;
@@ -399,10 +398,10 @@ class PageHandler {
      */
     __getPageQsResults(pageQs) {
         return [
-            ..._.get(pageQs, 'cat1.searchResults.listResults', []),
-            ..._.get(pageQs, 'cat1.searchResults.mapResults', []),
-            ..._.get(pageQs, 'cat2.searchResults.listResults', []),
-            ..._.get(pageQs, 'cat2.searchResults.mapResults', []),
+            ...pageQs?.cat1?.searchResults?.listResults ?? [],
+            ...pageQs?.cat1?.searchResults?.mapResults ?? [],
+            ...pageQs?.cat2?.searchResults?.listResults ?? [],
+            ...pageQs?.cat2?.searchResults?.mapResults ?? [],
         ];
     }
 
@@ -493,27 +492,11 @@ class PageHandler {
      */
     _mergeListResultsMapResults(queryStates) {
         return queryStates.flatMap(({ searchState }) => [
-            ..._.get(
-                searchState,
-                'cat1.searchResults.mapResults',
-                [],
-            ),
-            ..._.get(
-                searchState,
-                'cat1.searchResults.listResults',
-                [],
-            ),
-            ..._.get(
-                searchState,
-                'cat2.searchResults.mapResults',
-                [],
-            ),
-            ..._.get(
-                searchState,
-                'cat2.searchResults.listResults',
-                [],
-            ),
-        ]);
+            ...searchState?.cat1?.searchResults?.mapResults ?? [],
+            ...searchState?.cat1?.searchResults?.listResults ?? [],
+            ...searchState?.cat2?.searchResults?.mapResults ?? [],
+            ...searchState?.cat2?.searchResults?.listResults ?? [],
+        ]).flat(2);
     }
 
     /**
