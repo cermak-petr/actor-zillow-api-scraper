@@ -109,17 +109,6 @@ const initializePreLaunchHooks = (input, queryZpid, { crawler }) => {
     }];
 };
 
-const initializePostPageCloseHooks = () => {
-    return [async (/** @type {any} */ _pageId, /** @type {any} */ browserController) => {
-        try {
-            if (browserController?.launchContext?.session?.isUsable() === false) {
-                log.debug('Session is not usable');
-                await browserController.close();
-            }
-        } catch (e) {}
-    }];
-};
-
 /**
  *
  * @param {{
@@ -289,7 +278,6 @@ module.exports = {
     validateInput,
     getInitializedStartUrls,
     initializePreLaunchHooks,
-    initializePostPageCloseHooks,
     getSimpleResultFunction,
     getExtendOutputFunction,
 };

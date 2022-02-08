@@ -1,7 +1,7 @@
 const Apify = require('apify');
 const { LABELS, INITIAL_URL, URL_PATTERNS_TO_BLOCK } = require('./constants');
 const { PageHandler } = require('./page-handler');
-const { getExtendOutputFunction, getSimpleResultFunction, validateInput, getInitializedStartUrls, initializePreLaunchHooks, initializePostPageCloseHooks } = require('./initialization');
+const { getExtendOutputFunction, getSimpleResultFunction, validateInput, getInitializedStartUrls, initializePreLaunchHooks } = require('./initialization');
 const fns = require('./functions');
 
 const {
@@ -133,13 +133,12 @@ Apify.main(async () => {
     const browserPoolOptions = {
         useFingerprints: true,
         preLaunchHooks: initializePreLaunchHooks(input, queryZpid, crawlerWrapper),
-        postPageCloseHooks: initializePostPageCloseHooks(),
     };
 
     // Create crawler
     crawlerWrapper.crawler = new Apify.PuppeteerCrawler({
         requestQueue,
-        maxRequestRetries: input.maxRetries || 20,
+        maxRequestRetries: input.maxRetries || 3,
         handlePageTimeoutSecs: !queryZpid
             ? 120
             : input.handlePageTimeoutSecs || 3600,
@@ -152,6 +151,12 @@ Apify.main(async () => {
         },
         proxyConfiguration: proxyConfig,
         preNavigationHooks: [async ({ request, page }, gotoOptions) => {
+            if (isFinishing) {
+                // avoid browser-pool errors with Target closed.
+                request.noRetry = true;
+                throw new Error('Ending scrape');
+            }
+
             /** @type {any} */
             await puppeteer.blockRequests(page, {
                 urlPatterns: URL_PATTERNS_TO_BLOCK.concat(request.userData.label === LABELS.DETAIL ? [
@@ -176,14 +181,16 @@ Apify.main(async () => {
         postNavigationHooks: [async () => {
             if (isOverItems() && !isFinishing) {
                 isFinishing = true;
-                log.info('Reached maximum items, waiting for finish');
-                if (crawlerWrapper.crawler && crawlerWrapper.crawler.autoscaledPool) {
-                    await Promise.all([
-                        crawlerWrapper.crawler.autoscaledPool.pause(),
-                        // @ts-ignore
-                        crawlerWrapper.crawler.autoscaledPool.resolve(),
-                    ]);
-                }
+                try {
+                    log.info('Reached maximum items, waiting for finish');
+                    if (crawlerWrapper?.crawler?.autoscaledPool) {
+                        await Promise.all([
+                            crawlerWrapper.crawler.autoscaledPool.pause(),
+                            // @ts-ignore
+                            crawlerWrapper.crawler.autoscaledPool.resolve(),
+                        ]);
+                    }
+                } catch (e) {}
             }
         }],
         browserPoolOptions,
