@@ -371,9 +371,9 @@ const queryRegionHomes = async ({ qs, cat = 'cat1' }) => {
  * @returns query states with total count
  */
 const extractQueryStates = async (request, inputType, page, pageQs, paginationPage = 1) => {
-    /** @type { { states: Array<any>, totalCount: Number } } */
+    /** @type { { states: Record<string, any>, totalCount: Number } } */
     const queryStates = {
-        states: [],
+        states: {},
         totalCount: 0,
     };
 
@@ -405,7 +405,8 @@ const extractQueryStates = async (request, inputType, page, pageQs, paginationPa
             log.debug('query', result.qs);
 
             const searchState = JSON.parse(result.body);
-            queryStates.states.push({ qs, searchState });
+            const state = { qs, searchState };
+            queryStates.states[quickHash(state)] = state;
 
             if (log.getLevel() === log.LEVELS.DEBUG) {
                 await Apify.setValue('SEARCH_STATE', searchState);

@@ -52,7 +52,7 @@ class PageHandler {
 
         this.anyErrors = false;
 
-        this.dump = Apify.utils.log.LEVELS.DEBUG === Apify.utils.log.getLevel()
+        this.dump = log.LEVELS.DEBUG === Apify.utils.log.getLevel()
             ? async (/** @type {any} */ zpid, /** @type {any} */ data) => {
                 if (zpid != +zpid) {
                     await Apify.setValue(`DUMP-${Math.random()}`, data);
@@ -133,6 +133,7 @@ class PageHandler {
                         label: LABELS.DETAIL,
                         zpid: +zpid,
                     },
+                    uniqueKey: zpid || url,
                 }, { forefront: true });
 
                 if (!rq.wasAlreadyPresent) {
@@ -215,7 +216,7 @@ class PageHandler {
     async handleQueryAndSearchPage(label, queryZpid) {
         const { request: { userData: { term } } } = this.context;
 
-        const queryStates = [];
+        let queryStates = [];
         let totalCount = 0;
         let shouldContinue = true;
 
@@ -232,7 +233,7 @@ class PageHandler {
 
             if (shouldContinue) {
                 const extracted = await this._extractQueryStatesForCurrentPage(pageQs);
-                queryStates.push(...extracted.states);
+                queryStates = Object.values(extracted.states);
                 totalCount = extracted.totalCount;
             }
         } catch (/** @type {any} */ e) {
@@ -305,6 +306,7 @@ class PageHandler {
                     label: LABELS.DETAIL,
                     zpid: +zpid,
                 },
+                uniqueKey: zpid || detailUrl,
             }, { forefront: true });
         } finally {
             await sleep(100);
@@ -458,14 +460,12 @@ class PageHandler {
      * @returns
      */
     async _processExtractedQueryStates(queryStates, totalCount, queryZpid) {
-        const { page, request: { userData: { pageNumber } } } = this.context;
+        const { page, request: { uniqueKey, userData: { pageNumber } } } = this.context;
         const { zpids } = this.globalContext;
         const currentPage = pageNumber || 1;
 
         const results = this._mergeListResultsMapResults(queryStates);
         await this._validateQueryStatesResults(results, queryStates, totalCount);
-
-        await Apify.setValue('QUERY-STATES', queryStates);
 
         for (const { qs } of queryStates) {
             if (zpids.size >= this.globalContext.maxZpidsFound) {
@@ -482,6 +482,10 @@ class PageHandler {
             }
 
             await this._extractZpidsFromResults(results, queryZpid);
+        }
+
+        if (log.LEVELS.DEBUG === log.getLevel()) {
+            await Apify.setValue(`QUERY-STATES-${uniqueKey}`, queryStates);
         }
     }
 
@@ -571,10 +575,11 @@ class PageHandler {
             const pagesCount = Math.min((totalCount / LISTINGS_PER_PAGE) + 1, PAGES_LIMIT);
 
             const url = new URL(request.url);
+            url.pathname = url.pathname === '/' ? '/homes/' : url.pathname;
             url.searchParams.set('searchQueryState', JSON.stringify(searchQueryState));
 
             for (let i = 2; i <= pagesCount; i++) {
-                const uniqueKey = quickHash(`${url}${i}${JSON.stringify(searchQueryState)}`);
+                const uniqueKey = quickHash(`page${i}${JSON.stringify(searchQueryState)}`);
 
                 log.debug(`Enqueuing pagination page number ${i} for url: ${url.toString()}`);
                 await requestQueue.addRequest({
@@ -603,10 +608,10 @@ class PageHandler {
                 break;
             }
 
-            const uniqueKey = quickHash(`${request.url}${splitCount}${JSON.stringify(searchQueryState)}`);
+            const uniqueKey = quickHash(`split${splitCount}${JSON.stringify(searchQueryState)}`);
             log.debug('queryState', { searchQueryState, uniqueKey });
             const url = new URL(request.url);
-
+            url.pathname = url.pathname === '/' ? '/homes/' : url.pathname;
             url.searchParams.set('searchQueryState', JSON.stringify(searchQueryState));
 
             log.debug(`Enqueuing map split request: ${url.toString()}`);

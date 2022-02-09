@@ -130,6 +130,9 @@ Apify.main(async () => {
      */
     const crawlerWrapper = { crawler: null };
 
+    /**
+     * @type {Apify.BrowserCrawlerOptions['browserPoolOptions']}
+     */
     const browserPoolOptions = {
         useFingerprints: true,
         preLaunchHooks: initializePreLaunchHooks(input, queryZpid, crawlerWrapper),
@@ -150,6 +153,9 @@ Apify.main(async () => {
             },
         },
         proxyConfiguration: proxyConfig,
+        launchContext: {
+            useIncognitoPages: true,
+        },
         preNavigationHooks: [async ({ request, page }, gotoOptions) => {
             if (isFinishing) {
                 // avoid browser-pool errors with Target closed.

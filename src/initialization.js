@@ -65,9 +65,12 @@ const getInitializedStartUrls = async (input) => {
                 throw new Error(`Invalid startUrl ${req.url}. Url must start with: https://www.zillow.com`);
             }
 
+            const userData = getUrlData(req.url);
+
             startUrls.push({
                 url: req.url,
-                userData: getUrlData(req.url),
+                userData,
+                uniqueKey: `${userData.zpid || req.url}`,
             });
         }
     }
