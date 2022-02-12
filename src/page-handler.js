@@ -22,10 +22,7 @@ class PageHandler {
      * @param {{
      *  page: Puppeteer.Page,
      *  request: Apify.Request,
-     *  crawler: {
-     *      autoscaledPool: Apify.AutoscaledPool | undefined,
-     *      requestQueue: Apify.RequestQueue,
-     *  };
+     *  crawler: Apify.PuppeteerCrawler,
      *  session: Apify.Session,
      *  response: any,
      *  proxyInfo: Apify.ProxyInfo }} context
@@ -37,17 +34,20 @@ class PageHandler {
      *      splitThreshold: Number,
      *      startUrls: Apify.RequestOptions[],
      *      type: keyof TYPES,
+     *      handlePageTimeoutSecs: number,
      *      zpids: any[]
      *  },
      *  maxZpidsFound: Number,
+     *  crawler: Apify.PuppeteerCrawler,
      * }} globalContext
      * @param {*} extendOutputFunction
      */
-    constructor({ page, request, crawler: { requestQueue, autoscaledPool }, session, proxyInfo },
+    constructor({ page, request, crawler, session, proxyInfo },
         { zpids, input, maxZpidsFound },
         extendOutputFunction) {
+        const { requestQueue, autoscaledPool } = crawler;
         this.context = { page, request, requestQueue, autoscaledPool, session, proxyInfo };
-        this.globalContext = { zpids, input, maxZpidsFound };
+        this.globalContext = { zpids, input, maxZpidsFound, crawler };
         this.extendOutputFunction = extendOutputFunction;
 
         this.anyErrors = false;
@@ -69,6 +69,8 @@ class PageHandler {
      */
     async handleInitialPage(queryZpid, startUrls) {
         const { page, proxyInfo, autoscaledPool, requestQueue, session } = this.context;
+        const { input, crawler } = this.globalContext;
+
         try {
             log.info('Trying to get queryId...');
 
@@ -143,6 +145,7 @@ class PageHandler {
                 return;
             }
 
+            request.noRetry = true;
             throw new Error('ZPID not found in page');
         }
 
@@ -214,18 +217,18 @@ class PageHandler {
      * @returns
      */
     async handleQueryAndSearchPage(label, queryZpid) {
-        const { request: { userData: { term } } } = this.context;
+        const { request: { userData: { term } }, session } = this.context;
 
         let queryStates = [];
         let totalCount = 0;
         let shouldContinue = true;
 
-        if (label === LABELS.SEARCH) {
-            log.info(`Searching for "${term}"`);
-            await this._waitForSearchPageToLoad();
-        }
-
         try {
+            if (label === LABELS.SEARCH) {
+                log.info(`Searching for "${term}"`);
+                await this._waitForSearchPageToLoad();
+            }
+
             const pageQs = await this._getPageQs();
             const results = this.__getPageQsResults(pageQs);
 
@@ -233,11 +236,12 @@ class PageHandler {
 
             if (shouldContinue) {
                 const extracted = await this._extractQueryStatesForCurrentPage(pageQs);
-                queryStates = Object.values(extracted.states);
+                queryStates = Object.values(extracted.state);
                 totalCount = extracted.totalCount;
             }
         } catch (/** @type {any} */ e) {
-            log.debug(e);
+            session.retire();
+            log.debug('handleQueryAndSearchPage', { error: e.message });
         }
 
         log.debug('searchState', { queryStates });
@@ -262,13 +266,16 @@ class PageHandler {
             return;
         }
 
+        const invalidNonNumeric = 'Invalid non-numeric zpid';
+        const notZpid = `Zpid not string or number`;
+
         try {
             if (!zpid) {
-                throw new Error(`Zpid not string or number`);
+                throw new Error(notZpid);
             }
 
             if (+zpid != zpid) {
-                throw new Error('Invalid non-numeric zpid');
+                throw new Error(invalidNonNumeric);
             }
 
             if (zpids.has(`${zpid}`)) {
@@ -291,13 +298,16 @@ class PageHandler {
                 },
             );
         } catch (e) {
-            this.anyErrors = true;
-            session.markBad();
-            log.debug('processZpid', { error: e });
-
             if (this.isOverItems()) {
                 return;
             }
+
+            if ([notZpid, invalidNonNumeric].includes(e.message)) {
+                log.debug(`processZpid: ${e.message} - ${zpid}`);
+                return;
+            }
+
+            log.debug('processZpid', { error: e });
 
             // add as a separate detail for retrying
             await requestQueue.addRequest({
@@ -308,6 +318,9 @@ class PageHandler {
                 },
                 uniqueKey: zpid || detailUrl,
             }, { forefront: true });
+
+            this.anyErrors = true;
+            session.markBad();
         } finally {
             await sleep(100);
         }
@@ -443,13 +456,19 @@ class PageHandler {
         const pageNumber = request.userData.pageNumber ? request.userData.pageNumber : 1;
 
         const extractedQueryStates = await extractQueryStates(request, input.type, page, pageQs, pageNumber);
-        const { totalCount } = extractedQueryStates;
-
-        log.info(`Found ${totalCount} results on the current page.`);
+        const states = Object.values(extractedQueryStates);
+        const totalCount = states.reduce((out, { totalCount }) => (out + totalCount), 0);
 
         this.globalContext.maxZpidsFound = Math.max(totalCount, this.globalContext.maxZpidsFound);
 
-        return extractedQueryStates;
+        if (totalCount > 0) {
+            log.info(`Found ${totalCount} results on page ${pageNumber}.`);
+        }
+
+        return {
+            state: states.map(({ state }) => state),
+            totalCount,
+        };
     }
 
     /**
@@ -465,7 +484,11 @@ class PageHandler {
         const currentPage = pageNumber || 1;
 
         const results = this._mergeListResultsMapResults(queryStates);
-        await this._validateQueryStatesResults(results, queryStates, totalCount);
+        const result = await this._validateQueryStatesResults(results, queryStates, totalCount);
+
+        if (result === false) {
+            return;
+        }
 
         for (const { qs } of queryStates) {
             if (zpids.size >= this.globalContext.maxZpidsFound) {
@@ -513,14 +536,14 @@ class PageHandler {
         const { session } = this.context;
 
         if (!results?.length) {
-            log.info(`No results, retiring session.`);
-            session.retire();
             if (totalCount > 0) {
+                log.debug(`No results, retiring session.`);
+                session.retire();
                 await Apify.setValue(`SEARCHSTATE-${Math.random()}`, queryStates);
                 throw new Error(`No map results but result count is ${totalCount}`);
             } else {
                 log.debug('Really zero results');
-                throw new Error(`Zero results found. Retry request.`);
+                return false;
             }
         }
     }
@@ -544,13 +567,16 @@ class PageHandler {
         const mapSplittingThreshold = input.splitThreshold || RESULTS_LIMIT;
 
         if (totalCount >= mapSplittingThreshold) {
-            if (input.maxLevel && (request.userData.splitCount || 0) >= input.maxLevel) {
+            const currentSplitCount = request.userData.splitCount ?? 0;
+            const maxLevel = input.maxLevel ?? 5;
+
+            if (currentSplitCount >= maxLevel) {
                 log.info('Over max level');
             } else {
                 // Split map and enqueue sub-rectangles
-                log.info('Splitting map into 4 quadrants and zooming in');
-                const splitCount = (request.userData.splitCount || 0) + 1;
                 const splits = splitQueryState(queryState);
+                log.info(`Splitting map into ${splits.length} squares and zooming in`);
+                const splitCount = currentSplitCount + 1;
                 await this._enqueueMapSplits(splits, splitCount);
             }
         }
@@ -576,10 +602,16 @@ class PageHandler {
 
             const url = new URL(request.url);
             url.pathname = url.pathname === '/' ? '/homes/' : url.pathname;
-            url.searchParams.set('searchQueryState', JSON.stringify(searchQueryState));
 
             for (let i = 2; i <= pagesCount; i++) {
-                const uniqueKey = quickHash(`page${i}${JSON.stringify(searchQueryState)}`);
+                url.searchParams.set('searchQueryState', JSON.stringify({
+                    ...searchQueryState,
+                    pagination: {
+                        currentPage: i,
+                    },
+                }));
+
+                const uniqueKey = quickHash(`${JSON.stringify(searchQueryState)}`);
 
                 log.debug(`Enqueuing pagination page number ${i} for url: ${url.toString()}`);
                 await requestQueue.addRequest({
@@ -608,13 +640,15 @@ class PageHandler {
                 break;
             }
 
-            const uniqueKey = quickHash(`split${splitCount}${JSON.stringify(searchQueryState)}`);
+            const uniqueKey = quickHash(`${JSON.stringify(searchQueryState)}`);
             log.debug('queryState', { searchQueryState, uniqueKey });
             const url = new URL(request.url);
             url.pathname = url.pathname === '/' ? '/homes/' : url.pathname;
             url.searchParams.set('searchQueryState', JSON.stringify(searchQueryState));
+            url.searchParams.set('pagination', '{}');
 
             log.debug(`Enqueuing map split request: ${url.toString()}`);
+
             await requestQueue.addRequest({
                 url: url.toString(),
                 userData: {
@@ -636,8 +670,12 @@ class PageHandler {
         const { zpids } = this.globalContext;
 
         if (results.length > 0) {
+            let lastCount = 0;
             const extracted = () => {
-                log.info(`Extracted total ${zpids.size}`);
+                if (zpids.size !== lastCount) {
+                    lastCount = zpids.size;
+                    log.info(`Extracted total ${zpids.size}`);
+                }
             };
             const interval = setInterval(extracted, 10000);
 

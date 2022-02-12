@@ -3,6 +3,7 @@ const moment = require('moment');
 const Puppeteer = require('puppeteer'); // eslint-disable-line no-unused-vars
 const { createHash } = require('crypto');
 const vm = require('vm');
+const { bboxPolygon, bbox, area, squareGrid } = require('@turf/turf');
 const { gotScraping } = require('got-scraping');
 const { LABELS, TYPES, ORIGIN } = require('./constants'); // eslint-disable-line no-unused-vars
 
@@ -246,8 +247,10 @@ const interceptQueryId = async (page, proxy) => {
 };
 
 /**
- * Split map into 4 sub-rectangles
- * @param {{ mapBounds: { mapZoom: number, south: number, east: number, north: number, west: number } }} queryState
+ * Split map into many areas according to zoom
+ * @template {{ mapBounds: { south: number, east: number, north: number, west: number }, mapZoom?: number }} T
+ * @param {T} queryState
+ * @returns {Array<T>}
  */
 const splitQueryState = (queryState) => {
     if (typeof queryState !== 'object') {
@@ -256,17 +259,39 @@ const splitQueryState = (queryState) => {
 
     const qs = queryState;
     const mb = qs.mapBounds;
-    const states = [{ ...qs }, { ...qs }, { ...qs }, { ...qs }];
-    states.forEach((state) => { state.mapBounds = { ...mb }; });
-    states[0].mapBounds.south = (mb.south + mb.north) / 2;
-    states[0].mapBounds.east = (mb.east + mb.west) / 2;
-    states[1].mapBounds.south = (mb.south + mb.north) / 2;
-    states[1].mapBounds.west = (mb.east + mb.west) / 2;
-    states[2].mapBounds.north = (mb.south + mb.north) / 2;
-    states[2].mapBounds.east = (mb.east + mb.west) / 2;
-    states[3].mapBounds.north = (mb.south + mb.north) / 2;
-    states[3].mapBounds.west = (mb.east + mb.west) / 2;
-    states.forEach((state) => { if (mb.mapZoom) { state.mapZoom = mb.mapZoom + 1; } });
+    const box = bboxPolygon([
+        mb.west,
+        mb.north,
+        mb.east,
+        mb.south,
+    ]);
+    /**
+     * @type {Array<T>}
+     */
+    const states = [];
+
+    const isBigAreaToCover = !qs.mapZoom || qs.mapZoom < 10;
+    const a = (Math.sqrt(area(box)) / (isBigAreaToCover ? 1000 : 1)) / 4;
+    const grid = squareGrid(bbox(box), a, {
+        units: isBigAreaToCover ? 'kilometers' : 'meters',
+    });
+
+    grid.features.forEach(({ geometry }) => {
+        const b = bbox(geometry);
+
+        states.push({
+            ...qs,
+            pagination: {},
+            mapBounds: {
+                west: b[0],
+                north: b[1],
+                east: b[2],
+                south: b[3],
+            },
+            mapZoom: qs.mapZoom ? (qs.mapZoom + 1) : 9,
+        });
+    });
+
     return states;
 };
 
@@ -371,15 +396,17 @@ const queryRegionHomes = async ({ qs, cat = 'cat1' }) => {
  * @returns query states with total count
  */
 const extractQueryStates = async (request, inputType, page, pageQs, paginationPage = 1) => {
-    /** @type { { states: Record<string, any>, totalCount: Number } } */
-    const queryStates = {
-        states: {},
-        totalCount: 0,
-    };
+    /** @type { { [index:string]: { totalCount: number, state: Record<string, any> } } */
+    const queryStates = {};
 
     const type = request.userData.searchQueryState ? 'qs' : inputType;
     const qs = translateQsToFilter(request.userData.searchQueryState || pageQs.queryState);
-    qs.pagination = { currentPage: paginationPage };
+
+    if (paginationPage > 1) {
+        qs.pagination = { currentPage: paginationPage };
+    } else {
+        qs.pagination = {};
+    }
 
     const filterStates = getQueryFilterStates(qs, type);
 
@@ -406,13 +433,14 @@ const extractQueryStates = async (request, inputType, page, pageQs, paginationPa
 
             const searchState = JSON.parse(result.body);
             const state = { qs, searchState };
-            queryStates.states[quickHash(state)] = state;
+            queryStates[quickHash(state)] = {
+                state,
+                totalCount: searchState?.categoryTotals?.[cat]?.totalResultCount ?? 0,
+            };
 
             if (log.getLevel() === log.LEVELS.DEBUG) {
-                await Apify.setValue('SEARCH_STATE', searchState);
+                await Apify.setValue(`SEARCH_STATE-${request.uniqueKey}`, searchState);
             }
-
-            queryStates.totalCount += searchState?.categoryTotals?.[cat]?.totalResultCount ?? 0;
         }
     }
 

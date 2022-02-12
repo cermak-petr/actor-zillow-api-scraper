@@ -91,11 +91,9 @@ const getInitializedStartUrls = async (input) => {
 /**
  *
  * @param {{ debugLog: boolean, handlePageTimeoutSecs: any}} input
- * @param {ReturnType<typeof fns.createQueryZpid> | null} queryZpid
- * @param {{crawler: Apify.PuppeteerCrawler | null}} crawlerWrapper
  * @returns initialized preLaunchHooks
  */
-const initializePreLaunchHooks = (input, queryZpid, { crawler }) => {
+const initializePreLaunchHooks = (input) => {
     return [async (/** @type {any} */ _pageId, /** @type {{ launchOptions: any; }} */ launchContext) => {
         launchContext.launchOptions = {
             ...launchContext.launchOptions,
@@ -104,11 +102,6 @@ const initializePreLaunchHooks = (input, queryZpid, { crawler }) => {
             devtools: input.debugLog,
             headless: false,
         };
-        launchContext.useIncognitoPages = true;
-
-        if (queryZpid !== null) {
-            fns.changeHandlePageTimeout(crawler, input.handlePageTimeoutSecs || 3600);
-        }
     }];
 };
 

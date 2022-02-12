@@ -135,13 +135,22 @@ Apify.main(async () => {
      */
     const browserPoolOptions = {
         useFingerprints: true,
-        preLaunchHooks: initializePreLaunchHooks(input, queryZpid, crawlerWrapper),
+        preLaunchHooks: initializePreLaunchHooks(input),
+        fingerprintsOptions: {
+            fingerprintGeneratorOptions: {
+                browsers: ['chrome'],
+                devices: ['desktop'],
+                locales: ['en', 'en-US'],
+            },
+        },
+        maxOpenPagesPerBrowser: 1,
+        retireBrowserAfterPageCount: 1,
     };
 
     // Create crawler
     crawlerWrapper.crawler = new Apify.PuppeteerCrawler({
         requestQueue,
-        maxRequestRetries: input.maxRetries || 3,
+        maxRequestRetries: input.maxRetries || 5,
         handlePageTimeoutSecs: !queryZpid
             ? 120
             : input.handlePageTimeoutSecs || 3600,
@@ -162,6 +171,7 @@ Apify.main(async () => {
                 request.noRetry = true;
                 throw new Error('Ending scrape');
             }
+
 
             /** @type {any} */
             await puppeteer.blockRequests(page, {
@@ -184,7 +194,13 @@ Apify.main(async () => {
                 ? 'domcontentloaded'
                 : 'load';
         }],
-        postNavigationHooks: [async () => {
+        postNavigationHooks: [async ({ page }) => {
+            try {
+                if (!page.isClosed()) {
+                    await page.bringToFront();
+                }
+            } catch (e) {}
+
             if (isOverItems() && !isFinishing) {
                 isFinishing = true;
                 try {
@@ -223,6 +239,7 @@ Apify.main(async () => {
 
             if (label === LABELS.INITIAL || !queryZpid) {
                 queryZpid = await pageHandler.handleInitialPage(queryZpid, startUrls);
+                fns.changeHandlePageTimeout(crawler, input.handlePageTimeoutSecs || 3600);
             } else if (label === LABELS.DETAIL) {
                 await pageHandler.handleDetailPage();
             } else if (label === LABELS.ZPIDS) {

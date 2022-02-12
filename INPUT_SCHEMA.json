@@ -82,8 +82,8 @@
           "description": "How many retries until the scraper should give up",
           "type": "integer",
           "editor": "number",
-          "prefill": 3,
-          "default": 3
+          "prefill": 6,
+          "default": 6
       },
       "handlePageTimeoutSecs": {
           "title": "Timeout seconds",

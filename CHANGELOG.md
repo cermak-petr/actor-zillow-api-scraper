@@ -1,3 +1,18 @@
+## 2022-02-11
+
+Features:
+- Better splitting of big areas
+- Better filtering of results
+- Better logging
+
+Fix:
+- Map zoom on splits
+- Handle page timeout in 120s instead of 1h
+- Retrying of empty results
+- Paginating of results
+- Retrying of pages without zpid
+- Unecessarily retrying on invalid listings
+
 ## 2022-02-06
 
 Fix:

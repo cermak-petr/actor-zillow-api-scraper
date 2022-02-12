@@ -4,6 +4,7 @@
     "dependencies": {
         "apify": "^2.2.1",
         "moment": "^2.29.1",
+        "@turf/turf": "^6.5.0",
         "got-scraping": "^3.2.8",
         "puppeteer": "*"
     },
