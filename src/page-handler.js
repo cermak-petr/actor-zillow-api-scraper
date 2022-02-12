@@ -1,5 +1,4 @@
 const Apify = require('apify');
-const { sleep } = require('apify/build/utils');
 
 const Puppeteer = require('puppeteer'); // eslint-disable-line no-unused-vars
 const { LABELS, TYPES, RESULTS_LIMIT, PAGES_LIMIT } = require('./constants'); // eslint-disable-line no-unused-vars
@@ -14,7 +13,7 @@ const {
     splitQueryState,
 } = fns;
 
-const { log } = Apify.utils;
+const { log, sleep } = Apify.utils;
 
 class PageHandler {
     /**
@@ -268,6 +267,7 @@ class PageHandler {
 
         const invalidNonNumeric = 'Invalid non-numeric zpid';
         const notZpid = `Zpid not string or number`;
+        let noWait = false;
 
         try {
             if (!zpid) {
@@ -279,6 +279,7 @@ class PageHandler {
             }
 
             if (zpids.has(`${zpid}`)) {
+                noWait = true;
                 log.debug(`Zpids already contain zpid ${zpid}, returning from process zpid`);
                 return;
             }
@@ -303,6 +304,7 @@ class PageHandler {
             }
 
             if ([notZpid, invalidNonNumeric].includes(e.message)) {
+                noWait = true;
                 log.debug(`processZpid: ${e.message} - ${zpid}`);
                 return;
             }
@@ -322,7 +324,9 @@ class PageHandler {
             this.anyErrors = true;
             session.markBad();
         } finally {
-            await sleep(100);
+            if (!noWait) {
+                await sleep(100);
+            }
         }
     }
 
