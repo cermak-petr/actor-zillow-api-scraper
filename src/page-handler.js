@@ -68,7 +68,6 @@ class PageHandler {
      */
     async handleInitialPage(queryZpid, startUrls) {
         const { page, proxyInfo, autoscaledPool, requestQueue, session } = this.context;
-        const { input, crawler } = this.globalContext;
 
         try {
             log.info('Trying to get queryId...');
@@ -113,9 +112,10 @@ class PageHandler {
 
         const { request, page, requestQueue, session } = this.context;
 
-        log.debug(`Scraping ${page.url()}`);
+        const url = page.url();
+        log.debug(`Scraping ${url}`);
 
-        if (request.url.startsWith('/b/') || !+request.userData.zpid) {
+        if (url.startsWith('/b/') || !+request.userData.zpid) {
             const nextData = await page.$eval('[id="__NEXT_DATA__"]', (s) => JSON.parse(s.innerHTML));
 
             if (!nextData) {
@@ -126,19 +126,19 @@ class PageHandler {
             const zpid = nextData?.props?.initialData?.building?.zpid;
 
             if (zpid) {
-                const url = `https://www.zillow.com/homedetails/${zpid}_zpid/`;
+                const zpidUrl = `https://www.zillow.com/homedetails/${zpid}_zpid/`;
 
                 const rq = await requestQueue.addRequest({
-                    url,
+                    url: zpidUrl,
                     userData: {
                         label: LABELS.DETAIL,
                         zpid: +zpid,
                     },
-                    uniqueKey: zpid || url,
+                    uniqueKey: zpid || zpidUrl,
                 }, { forefront: true });
 
                 if (!rq.wasAlreadyPresent) {
-                    log.info(`Re-enqueueing ${url}`);
+                    log.info(`Re-enqueueing ${zpidUrl}`);
                 }
 
                 return;
@@ -157,7 +157,7 @@ class PageHandler {
             throw new Error('Failed to load preloaded data scripts');
         }
 
-        log.info(`Extracting data from ${request.url}`);
+        log.info(`Extracting data from ${url}`);
         let noScriptsFound = true;
 
         for (const script of scripts) {
@@ -218,6 +218,7 @@ class PageHandler {
     async handleQueryAndSearchPage(label, queryZpid) {
         const { request: { userData: { term } }, session } = this.context;
 
+        /** @type {any[]} */
         let queryStates = [];
         let totalCount = 0;
         let shouldContinue = true;
@@ -241,6 +242,7 @@ class PageHandler {
         } catch (/** @type {any} */ e) {
             session.retire();
             log.debug('handleQueryAndSearchPage', { error: e.message });
+            throw new Error('Retrying search');
         }
 
         log.debug('searchState', { queryStates });
@@ -461,17 +463,17 @@ class PageHandler {
 
         const extractedQueryStates = await extractQueryStates(request, input.type, page, pageQs, pageNumber);
         const states = Object.values(extractedQueryStates);
-        const totalCount = states.reduce((out, { totalCount }) => (out + totalCount), 0);
+        const sumTotalCount = states.reduce((out, { totalCount }) => (out + totalCount), 0);
 
-        this.globalContext.maxZpidsFound = Math.max(totalCount, this.globalContext.maxZpidsFound);
+        this.globalContext.maxZpidsFound = Math.max(sumTotalCount, this.globalContext.maxZpidsFound);
 
-        if (totalCount > 0) {
-            log.info(`Found ${totalCount} results on page ${pageNumber}.`);
+        if (sumTotalCount > 0) {
+            log.info(`Found ${sumTotalCount} results on page ${pageNumber}.`);
         }
 
         return {
             state: states.map(({ state }) => state),
-            totalCount,
+            totalCount: sumTotalCount,
         };
     }
 
@@ -594,7 +596,7 @@ class PageHandler {
      * @param {Number} totalCount
      */
     async _tryEnqueuePaginationPages(searchQueryState, totalCount) {
-        const { requestQueue, request } = this.context;
+        const { requestQueue, page } = this.context;
         const { zpids } = this.globalContext;
 
         if (totalCount > 0 && zpids.size < this.globalContext.maxZpidsFound) {
@@ -604,7 +606,7 @@ class PageHandler {
             // first pagination page is already fetched successfully, pages are ordered from 1 (not from 0)
             const pagesCount = Math.min((totalCount / LISTINGS_PER_PAGE) + 1, PAGES_LIMIT);
 
-            const url = new URL(request.url);
+            const url = new URL(page.url());
             url.pathname = url.pathname === '/' ? '/homes/' : url.pathname;
 
             for (let i = 2; i <= pagesCount; i++) {
@@ -637,7 +639,7 @@ class PageHandler {
      * @param {Number} splitCount
      */
     async _enqueueMapSplits(splits, splitCount) {
-        const { request, requestQueue } = this.context;
+        const { requestQueue, page } = this.context;
 
         for (const searchQueryState of splits) {
             if (this.isOverItems()) {
@@ -646,7 +648,7 @@ class PageHandler {
 
             const uniqueKey = quickHash(`${JSON.stringify(searchQueryState)}`);
             log.debug('queryState', { searchQueryState, uniqueKey });
-            const url = new URL(request.url);
+            const url = new URL(page.url());
             url.pathname = url.pathname === '/' ? '/homes/' : url.pathname;
             url.searchParams.set('searchQueryState', JSON.stringify(searchQueryState));
             url.searchParams.set('pagination', '{}');
