@@ -466,13 +466,14 @@ const extractQueryStates = async (ignoreFilter, inputType, page, pageQueryState,
                 continue;
             }
 
-            log.debug(`Fetch url: ${response.url}`, response);
-
             /**
              * @type {GetSearchPageState}
              */
             const result = JSON.parse(response.body);
             const { qs, url } = response;
+
+            log.debug(`Fetch url: ${response.url}`, { url, qs });
+
             const hash = getUniqueKeyFromQueryState(qs, [cat, wants]);
 
             if (!queryStates.has(hash)) {
