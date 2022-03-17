@@ -313,7 +313,7 @@ const splitQueryState = (queryState) => {
             },
             // eslint-disable-next-line no-nested-ternary
             mapZoom: qs.mapZoom
-                ? (qs.mapZoom < 17 ? qs.mapZoom + 1 : qs.mapZoom)
+                ? (qs.mapZoom < 19 ? qs.mapZoom + 1 : qs.mapZoom)
                 : 9,
         });
     });
