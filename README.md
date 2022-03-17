@@ -3,7 +3,7 @@
 Our free Zillow Real Estate Scraper lets you extract data from real estate listings on [Zillow.com](https://zillow.com). It enables you to search properties in any location and extract detailed information, such as full addresses, longitude, latitude, price, description, URL, photos, number of bedrooms and bathrooms, and all other information available.
 
 ## Why scrape Zillow?
-Zillow has over 110 million properties in its database, more than 245 million monthly unique visitors, and 80% of all homes in the United States have been viewed on the website. 
+Zillow has over 110 million properties in its database, more than 245 million monthly unique visitors, and 80% of all homes in the United States have been viewed on the website.
 
 So what could you do with all that real estate listings data?
 
@@ -33,7 +33,9 @@ Note that it is much more efficient to run one longer scrape (at least one minut
 | search | string | Query string to be searched | `"Los Angeles"` |
 | startUrls | array | List of [request](https://sdk.apify.com/docs/api/request#docsNav) objects that will be deeply crawled. The URL can be any Zillow.com home listing page. | none |
 | maxItems | number | Maximum number of pages that will be scraped | `200` |
-| maxLevel | number | Maximum map splitting level | `20` |
+| maxLevel | number | Maximum map splitting level | `5` |
+| zpids | number[] | Direct zpid number | `[]` |
+| zipcodes | number[] | US zipcodes | `[]` |
 | minDate | string | Minimum date of the results allowed (timestamp or date string) | none |
 | simple | boolean | Toggle whether simplified results will be returned | `true` |
 | extendOutputFunction | string | Function that takes Zillow home data object as argument and returns data that will be merged with the default output. More information in [Extend output function](#extend-output-function) | `async ({ item, data }) => { return item; }` |
@@ -79,9 +81,9 @@ If the `simple` attribute is not set, the result will contain many more attribut
 You can find an example of a full result [here](https://pastebin.com/dRxuZmNQ).
 
 ### Map splitting
-To overcome the Zillow API limits of 1,000 calls per day and 20 calls per page, the scraper uses Zillow's internal API to search for homes on a rectangular section of a map. 
+To overcome the Zillow API limits of 1,000 calls per day and 20 calls per page, the scraper uses Zillow's internal API to search for homes on a rectangular section of a map.
 
-*Note that the limit at the time of creating this actor was 500 results per page, so the calculations below are based on that figure.* 
+*Note that the limit at the time of creating this actor was 500 results per page, so the calculations below are based on that figure.*
 
 If the number of results on the map is higher than 500, the map is split into four quadrants and zoomed. Each of these quadrants is searched for homes and can again contain 500 results (that means using 1 split, we've increased the total result limit to 2,000). Unless the result count in the quadrant is less than 500 (no need to split anymore), the quadrant is split again and so on. To limit this behavior, you can set the `maxLevel` attribute. That way, the map will be split only a maximum of `maxLevel` times, even if the number of results is higher than 500.
 
@@ -134,4 +136,5 @@ async ({ state, request, requestQueue, Apify, LABELS, TYPES, processZpids, query
 ```
 
 ## Changelog
+
 Zillow Real Estate Scraper is actively maintained and regularly updated. You can always find the latest fixes and changes in the [changelog](https://github.com/cermak-petr/actor-zillow-api-scraper/blob/master/CHANGELOG.md).

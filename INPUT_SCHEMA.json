@@ -46,12 +46,19 @@
           "editor": "json",
           "description": "List of ZPIDs that will be scraped."
       },
+      "zipcodes": {
+          "title": "US Zipcodes",
+          "type": "array",
+          "editor": "json",
+          "description": "List of zipcodes that will be scraped. Notice that this can take a lot of time to complete!"
+      },
       "maxLevel": {
           "title": "Max zoom level",
           "type": "integer",
           "minimum": 0,
           "prefill": 5,
-          "description": "Maximum map splitting level",
+          "default": 0,
+          "description": "Maximum map splitting level. The bigger number is set, the longer the scrape will take",
           "sectionCaption": "Other filters (zoom level, dates)"
       },
       "minDate": {
@@ -92,13 +99,6 @@
           "prefill": 3600,
           "type": "integer",
           "editor": "number"
-      },
-      "stealth": {
-          "title": "Stealth",
-          "description": "Apply stealth to the browser",
-          "default": false,
-          "type": "boolean",
-          "editor": "checkbox"
       },
       "debugLog": {
           "title": "Debug log",

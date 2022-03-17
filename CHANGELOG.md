@@ -1,3 +1,15 @@
+## 2022-03-17
+
+Features:
+- Refactor the scraping and map splitting
+- Add support for US zipcodes
+- Faster scraping
+- Supports city wide scraping
+
+Fix:
+- Map zoom for street level
+- Query state for URLs
+
 ## 2022-02-11
 
 Features:

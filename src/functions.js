@@ -5,9 +5,9 @@ const { createHash } = require('crypto');
 const vm = require('vm');
 const { bboxPolygon, bbox, area, squareGrid } = require('@turf/turf');
 const { gotScraping } = require('got-scraping');
-const { LABELS, TYPES, ORIGIN } = require('./constants'); // eslint-disable-line no-unused-vars
+const { LABELS, TYPES, ORIGIN, GetSearchPageState, SearchQueryState } = require('./constants'); // eslint-disable-line no-unused-vars
 
-const { log } = Apify.utils;
+const { log, sleep } = Apify.utils;
 
 const mappings = {
     att: 'keywords',
@@ -19,7 +19,6 @@ const mappings = {
     sto: 'singleStory',
     parka: 'onlyRentalParkingAvailable',
     mp: 'monthlyPayment',
-    undefined: 'baths',
     app: 'onlyRentalAcceptsApplications',
     seo: 'SEOTypedIdField',
     zo: 'isZillowOwnedOnly',
@@ -39,6 +38,7 @@ const mappings = {
     fore: 'isForSaleForeclosure',
     schh: 'isHighSchool',
     ah: 'isAllHomes',
+    '55plus': 'ageRestricted55Plus',
     cat: 'onlyRentalCatsAllowed',
     schc: 'isCharterSchool',
     pet: 'onlyRentalPetsAllowed',
@@ -75,23 +75,41 @@ const mappings = {
     sch: 'enableSchools',
 };
 
+const reverseMappings = Object.entries(mappings).reduce((out, [key, value]) => {
+    out[value] = key;
+    return out;
+}, {});
+
 /**
- * Transforms searchQueryState URL parameters into filters
- * MUTATES the qs filterState
+ * Transforms searchQueryState URL parameters into filters if needed
  *
- * @param {{ filterState: Record<string, any> }} qs
+ * @param {Record<string, any>} filter
  */
-const translateQsToFilter = (qs) => {
-    if (!qs) {
-        return { filterState: {} };
+const translateQsToFilter = (filter) => {
+    if (!filter || typeof filter !== 'object') {
+        return {};
     }
 
-    qs.filterState = Object.entries(qs.filterState).reduce((out, [key, value]) => {
+    return Object.entries(filter).reduce((out, [key, value]) => {
         out[mappings[key] ?? key] = value;
         return out;
     }, {});
+};
 
-    return qs;
+/**
+ * Translate a filter back to QS
+ *
+ * @param {Record<string, any>} filter
+ */
+const translateFilterToQs = (filter) => {
+    if (!filter || typeof filter !== 'object') {
+        return {};
+    }
+
+    return Object.entries(filter).reduce((out, [key, value]) => {
+        out[reverseMappings[key] ?? key] = value;
+        return out;
+    }, {});
 };
 
 /**
@@ -248,9 +266,8 @@ const interceptQueryId = async (page, proxy) => {
 
 /**
  * Split map into many areas according to zoom
- * @template {{ mapBounds: { south: number, east: number, north: number, west: number }, mapZoom?: number }} T
- * @param {T} queryState
- * @returns {Array<T>}
+ * @param {SearchQueryState} queryState
+ * @returns {Array<queryState>}
  */
 const splitQueryState = (queryState) => {
     if (typeof queryState !== 'object') {
@@ -259,14 +276,21 @@ const splitQueryState = (queryState) => {
 
     const qs = queryState;
     const mb = qs.mapBounds;
+
+    if (!mb) {
+        log.debug('no mapBounds');
+        return [queryState];
+    }
+
     const box = bboxPolygon([
         mb.west,
-        mb.north,
-        mb.east,
         mb.south,
+        mb.east,
+        mb.north,
     ]);
+
     /**
-     * @type {Array<T>}
+     * @type {Array<queryState>}
      */
     const states = [];
 
@@ -281,14 +305,16 @@ const splitQueryState = (queryState) => {
 
         states.push({
             ...qs,
-            pagination: {},
             mapBounds: {
                 west: b[0],
-                north: b[1],
+                south: b[1],
                 east: b[2],
-                south: b[3],
+                north: b[3],
             },
-            mapZoom: qs.mapZoom ? (qs.mapZoom + 1) : 9,
+            // eslint-disable-next-line no-nested-ternary
+            mapZoom: qs.mapZoom
+                ? (qs.mapZoom < 17 ? qs.mapZoom + 1 : qs.mapZoom)
+                : 9,
         });
     });
 
@@ -296,48 +322,53 @@ const splitQueryState = (queryState) => {
 };
 
 /**
- * @param {{ filterState: Record<string, any> }} qs
+ * N.B: This should be only used for GetSearchPageState.htm requests!
+ *
+ * @param {SearchQueryState['filterState']} filterState
  * @param {keyof TYPES} type
  * @returns filter states
  */
-const getQueryFilterStates = (qs, type) => {
+const getQueryFilterStates = (filterState, type) => {
     /**
      * Filter state must follow the exact format corresponding
      * to the Zillow API. False values cannot be ommited and
      * the exact number of query parameters has to be preserved.
      * Otherwise the request returns both list and map results empty.
      */
-
     const rentSoldCommonFilters = {
-        isAllHomes: { value: true },
         isForSaleByAgent: { value: false },
-        isForSaleByOwner: { value: false },
         isNewConstruction: { value: false },
         isComingSoon: { value: false },
-        isAuction: { value: false },
         isForSaleForeclosure: { value: false },
+    };
+
+    const needed = {
+        sortSelection: { value: 'globalrelevanceex' },
+        isAllHomes: { value: true },
     };
 
     const typeFilters = {
         sale: [{
-            isAllHomes: { value: true },
+            ...needed,
         }],
         fsbo: [{
-            isAllHomes: { value: true },
+            ...needed,
             isForSaleByOwner: { value: true },
         }],
         rent: [{
+            ...needed,
             isForRent: { value: true },
             ...rentSoldCommonFilters,
         }],
         sold: [{
+            ...needed,
             isRecentlySold: { value: true },
             ...rentSoldCommonFilters,
         }],
         /** @type {Array<any>} */
         all: [],
-        /** qs is processed in translateQsToFilter (it comes from request.userData.searchQueryState), not from input.type) */
-        qs: [qs.filterState],
+        /** qs is processed in translateQsToFilter, not from input.type) */
+        qs: [filterState],
     };
 
     /**
@@ -345,7 +376,11 @@ const getQueryFilterStates = (qs, type) => {
      * for-sale and for-rent listings have different base url.
      * To extract all items, separate requests need to be sent.
      */
-    typeFilters.all.push(...typeFilters.sale, ...typeFilters.rent); // TODO: should typeFilters.sold be included in typeFilters.all?
+    typeFilters.all.push(
+        ...typeFilters.sale,
+        ...typeFilters.sold,
+        ...typeFilters.rent,
+    );
 
     return typeFilters[type];
 };
@@ -353,98 +388,110 @@ const getQueryFilterStates = (qs, type) => {
 /**
  * Make API query for all ZPIDs in map reqion
  * @param {{
- *  qs: { filterState: any },
- *  type: keyof TYPES,
- *  cat: 'cat1' | 'cat2'
- * }} queryState
+ *  qs: SearchQueryState,
+ *  wants: Record<string, any>
+ * }} params
  */
-const queryRegionHomes = async ({ qs, cat = 'cat1' }) => {
-    const wants = {
-        [cat]: ['listResults', 'mapResults'],
-    };
+const queryRegionHomes = async (params) => {
+    const { qs, wants } = params;
 
-    const resp = await fetch(`https://www.zillow.com/search/GetSearchPageState.htm?searchQueryState=${encodeURIComponent(JSON.stringify(qs))}&wants=${JSON.stringify(wants)}&requestId=${Math.floor(Math.random() * 70) + 1}`, {
-        body: null,
+    const url = `https://www.zillow.com/search/GetSearchPageState.htm?searchQueryState=${encodeURIComponent(JSON.stringify(qs))}&wants=${encodeURIComponent(JSON.stringify(wants))}&requestId=${Math.floor(Math.random() * 10) + 1}`;
+    const resp = await fetch(url, {
         headers: {
-            dnt: '1',
             accept: '*/*',
-            origin: document.location.origin,
-            referer: document.location.href,
         },
+        referrerPolicy: 'no-referrer',
         method: 'GET',
         mode: 'cors',
+        redirect: 'error',
         credentials: 'include',
     });
 
-    if (resp.status !== 200) {
-        throw new Error(`Got ${resp.status} from query`);
-    }
+    const ret = {
+        qs,
+        url,
+        params,
+        error: resp.status !== 200 ? `Got ${resp.status} from query` : null,
+    };
 
     return {
-        body: await (await resp.blob()).text(),
-        qs,
+        ...ret,
+        body: await (await resp.blob()).text(), // .json() crashes if not valid JSON. this is dealt elsewhere
     };
 };
 
 /**
  *
- * @param {Apify.Request} request
+ * @param {boolean} ignoreFilter
  * @param {keyof TYPES} inputType
  * @param {Puppeteer.Page} page
- * @param {any} pageQs
- * @param {Number} paginationPage
- * @returns query states with total count
+ * @param {SearchQueryState} pageQueryState
+ * @param {number} paginationPage
+ * @param {(param: { cat: 'cat1' | 'cat2', qs: SearchQueryState, url: string, hash: string, result: GetSearchPageState }) => Promise<void>} cb
  */
-const extractQueryStates = async (request, inputType, page, pageQs, paginationPage = 1) => {
-    /** @type { { [index:string]: { totalCount: number, state: Record<string, any> } } */
-    const queryStates = {};
+const extractQueryStates = async (ignoreFilter, inputType, page, pageQueryState, cb, paginationPage = 1) => {
+    const queryStates = new Set();
 
-    const type = request.userData.searchQueryState ? 'qs' : inputType;
-    const qs = translateQsToFilter(request.userData.searchQueryState || pageQs.queryState);
+    const type = ignoreFilter ? 'qs' : inputType;
 
-    if (paginationPage > 1) {
-        qs.pagination = { currentPage: paginationPage };
-    } else {
-        qs.pagination = {};
-    }
+    const filterStates = getQueryFilterStates(translateQsToFilter(pageQueryState.filterState), type);
 
-    const filterStates = getQueryFilterStates(qs, type);
+    /** @type {Array<['cat1' | 'cat2', any]>} */
+    const configs = [
+        ['cat1', { cat1: ['listResults', 'mapResults'], cat2: ['total'] }],
+        ['cat1', { cat1: ['listResults', 'mapResults'] }],
 
-    const listingTypes = ['cat1', 'cat2']; // cat1 = agents listings, cat2 = other listings
-    for (const cat of listingTypes) {
-        const wants = {
-            [cat]: ['listResults', 'mapResults'],
-        };
+        ['cat2', { cat2: ['listResults', 'mapResults'] }],
+    ];
 
+    for (const [cat, wants] of configs) {
         for (const filterState of filterStates) {
-            qs.filterState = filterState;
-            const url = `https://www.zillow.com/search/GetSearchPageState.htm?searchQueryState=${JSON.stringify(qs)}&wants=${JSON.stringify(wants)}&requestId=${Math.floor(Math.random() * 70) + 1}`;
-            log.debug(`Fetching url: ${url}`);
-
-            const result = await page.evaluate(
+            const response = await page.evaluate(
                 queryRegionHomes,
                 {
-                    qs: translateQsToFilter(request.userData.searchQueryState || pageQs.queryState),
+                    qs: {
+                        ...pageQueryState,
+                        filterState,
+                        category: cat,
+                        pagination: (paginationPage > 1 ? { currentPage: paginationPage } : {}),
+                    },
+                    wants,
                     cat,
                 },
             );
 
-            log.debug('query', result.qs);
+            if (response.error) {
+                log.debug(`Request failed`, { pageQueryState, response });
+                await Apify.setValue(getUniqueKeyFromQueryState(response.qs), response);
+                continue;
+            }
 
-            const searchState = JSON.parse(result.body);
-            const state = { qs, searchState };
-            queryStates[quickHash(state)] = {
-                state,
-                totalCount: searchState?.categoryTotals?.[cat]?.totalResultCount ?? 0,
-            };
+            log.debug(`Fetch url: ${response.url}`, response);
+
+            /**
+             * @type {GetSearchPageState}
+             */
+            const result = JSON.parse(response.body);
+            const { qs, url } = response;
+            const hash = getUniqueKeyFromQueryState(qs, [cat, wants]);
+
+            if (!queryStates.has(hash)) {
+                queryStates.add(hash);
+
+                await cb({
+                    result,
+                    qs,
+                    cat,
+                    hash,
+                    url,
+                });
+            }
 
             if (log.getLevel() === log.LEVELS.DEBUG) {
-                await Apify.setValue(`SEARCH_STATE-${request.uniqueKey}`, searchState);
+                await Apify.setValue(`SEARCH_STATE-${hash}`, result);
             }
         }
     }
-
-    return queryStates;
 };
 
 /**
@@ -537,7 +584,7 @@ const createGetSimpleResult = (attributes) => (/** @type {any} */ data) => {
 };
 
 /**
- * @param {any} data
+ * @param {Array<any> | Record<string, any>} data
  */
 const quickHash = (data) => createHash('sha256').update(JSON.stringify(data)).digest('hex').slice(0, 12);
 
@@ -552,14 +599,14 @@ const getUrlData = (url) => {
 
         return {
             label: LABELS.DETAIL,
-            zpid: zpid && zpid[1] ? +zpid[1] : '',
+            zpid: +zpid?.[1] || '',
         };
     }
 
     if (nUrl.searchParams.has('searchQueryState')) {
         return {
             label: LABELS.QUERY,
-            searchQueryState: JSON.parse(nUrl.searchParams.get('searchQueryState') || ''),
+            ignoreFilter: true,
         };
     }
 
@@ -570,14 +617,35 @@ const getUrlData = (url) => {
     }
 
     if (nUrl.pathname.match(/\/(fsbo|rent|sale|sold)\/?/)) {
-        throw new Error(`\n\nThe url provided "${nUrl.toString()}" isn't supported. Use a proper listing url containing searchQueryState\n\n`);
+        throw new Error(`\n\nThe url provided "${nUrl.toString()}" isn't supported. Use a proper listing url containing a searchQueryState parameter\n\n`);
     }
 
-    const label = nUrl.pathname.includes(',') ? LABELS.SEARCH : LABELS.QUERY;
-    return {
-        label,
-        term: label === LABELS.SEARCH ? nUrl.pathname.split('/', 2).filter((s) => s)[0] : undefined,
-    };
+    throw new Error(`The URL could not be categorized: ${nUrl.toString()}`);
+};
+
+/**
+ * Create a unique key for the given state. URLs can't be used for
+ * uniqueKeys because they are only representational, the true value is in the
+ * query parameter.
+ *
+ * This is deterministic and will generate the same hash for the given parameters.
+ *
+ * @param {SearchQueryState} queryState
+ * @param {string[]} nonce
+ */
+const getUniqueKeyFromQueryState = (queryState, nonce = []) => {
+    return quickHash([
+        queryState.mapZoom,
+        [
+            queryState.mapBounds.west,
+            queryState.mapBounds.east,
+            queryState.mapBounds.north,
+            queryState.mapBounds.south,
+        ],
+        queryState.pagination?.currentPage || 1,
+        Object.keys(queryState.filterState ?? {}).sort(),
+        nonce,
+    ]);
 };
 
 /**
@@ -602,15 +670,15 @@ const getUrlData = (url) => {
  * @template MAPPED
  * @template {{ [key: string]: any }} HELPERS
  * @param {{
-    *  key: string,
-    *  map?: (data: RAW, params: PARAMS<HELPERS>) => Promise<MAPPED>,
-    *  output?: (data: MAPPED, params: PARAMS<HELPERS> & { data: RAW, item: MAPPED }) => Promise<void>,
-    *  filter?: (obj: { data: RAW, item: MAPPED }, params: PARAMS<HELPERS>) => Promise<boolean>,
-    *  input: INPUT,
-    *  helpers: HELPERS,
-    * }} params
-    * @return {Promise<(data: RAW, args?: Record<string, any>) => Promise<void>>}
-    */
+ *  key: string,
+ *  map?: (data: RAW, params: PARAMS<HELPERS>) => Promise<MAPPED>,
+ *  output?: (data: MAPPED, params: PARAMS<HELPERS> & { data: RAW, item: MAPPED }) => Promise<void>,
+ *  filter?: (obj: { data: RAW, item: MAPPED }, params: PARAMS<HELPERS>) => Promise<boolean>,
+ *  input: INPUT,
+ *  helpers: HELPERS,
+ * }} params
+ * @return {Promise<(data: RAW, args?: Record<string, any>) => Promise<void>>}
+ */
 const extendFunction = async ({
     key,
     output,
@@ -798,4 +866,6 @@ module.exports = {
     patchLog,
     changeHandlePageTimeout,
     isOverItems,
+    translateFilterToQs,
+    getUniqueKeyFromQueryState,
 };

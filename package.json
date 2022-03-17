@@ -2,15 +2,16 @@
     "name": "actor-zillow-api",
     "version": "0.0.1",
     "dependencies": {
-        "apify": "^2.2.1",
+        "apify": "^2.2.2",
         "moment": "^2.29.1",
         "@turf/turf": "^6.5.0",
+        "browser-pool": "^3.1.1",
         "got-scraping": "^3.2.8",
         "puppeteer": "*"
     },
     "devDependencies": {
         "@apify/eslint-config": "^0.2.2",
-        "eslint": "^8.8.0"
+        "eslint": "^8.10.0"
     },
     "scripts": {
         "start": "node src/main.js",

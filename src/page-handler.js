@@ -1,7 +1,17 @@
 const Apify = require('apify');
 
-const Puppeteer = require('puppeteer'); // eslint-disable-line no-unused-vars
-const { LABELS, TYPES, RESULTS_LIMIT, PAGES_LIMIT } = require('./constants'); // eslint-disable-line no-unused-vars
+/* eslint-disable no-unused-vars */
+const Puppeteer = require('puppeteer');
+const {
+    LABELS,
+    TYPES,
+    PAGES_LIMIT,
+    SearchQueryState,
+    GetSearchPageState,
+    ZpidResult,
+    ORIGIN,
+} = require('./constants');
+/* eslint-enable no-unused-vars */
 
 const fns = require('./functions');
 
@@ -9,7 +19,6 @@ const {
     createQueryZpid,
     interceptQueryId,
     extractQueryStates,
-    quickHash,
     splitQueryState,
 } = fns;
 
@@ -28,46 +37,65 @@ class PageHandler {
      * @param {{
      *  zpids: Set<any>,
      *  input: {
-     *      maxItems: Number,
-     *      maxLevel: Number,
-     *      splitThreshold: Number,
+     *      maxItems: number,
+     *      maxLevel: number,
+     *      debugLog: boolean,
+     *      splitThreshold: number,
      *      startUrls: Apify.RequestOptions[],
      *      type: keyof TYPES,
      *      handlePageTimeoutSecs: number,
-     *      zpids: any[]
+     *      zpids: any[],
      *  },
-     *  maxZpidsFound: Number,
      *  crawler: Apify.PuppeteerCrawler,
      * }} globalContext
      * @param {*} extendOutputFunction
      */
-    constructor({ page, request, crawler, session, proxyInfo },
-        { zpids, input, maxZpidsFound },
-        extendOutputFunction) {
+    constructor({ page, request, crawler, session, proxyInfo }, { zpids, input }, extendOutputFunction) {
         const { requestQueue, autoscaledPool } = crawler;
+
         this.context = { page, request, requestQueue, autoscaledPool, session, proxyInfo };
-        this.globalContext = { zpids, input, maxZpidsFound, crawler };
+        this.globalContext = { zpids, input, crawler };
         this.extendOutputFunction = extendOutputFunction;
 
         this.anyErrors = false;
 
-        this.dump = log.LEVELS.DEBUG === Apify.utils.log.getLevel()
-            ? async (/** @type {any} */ zpid, /** @type {any} */ data) => {
-                if (zpid != +zpid) {
-                    await Apify.setValue(`DUMP-${Math.random()}`, data);
-                }
-            }
-            : () => {};
+        this.pendingPromise = this.getResponse(page);
     }
 
     /**
+     * This promise is needed as a fallback from the page load state that contains no results,
+     * but a request is issued to this endpoint. Needs to start waiting before anything else
      *
-     * @param {ReturnType<typeof createQueryZpid> | null } queryZpid
-     * @param {Array<Apify.RequestOptions>} startUrls
-     * @returns queryZpid
+     * @param {Puppeteer.Page} page
+     * @returns {Promise<{ result: GetSearchPageState, searchQueryState: SearchQueryState } | null>}
      */
-    async handleInitialPage(queryZpid, startUrls) {
-        const { page, proxyInfo, autoscaledPool, requestQueue, session } = this.context;
+    async getResponse(page) {
+        try {
+            const response = await page.waitForResponse((req) => {
+                return req.url().includes('/search/GetSearchPageState.htm');
+            }, { timeout: 45000 });
+
+            const url = new URL(response.request().url()).searchParams.get('searchQueryState');
+
+            return {
+                result: await response.json(),
+                searchQueryState: JSON.parse(url ?? '{}'),
+            };
+        } catch (e) {
+            log.debug('getResponse', { e: e.message });
+
+            return null;
+        }
+    }
+
+    /**
+     * @param {ReturnType<typeof createQueryZpid> | null} queryZpid
+     * @param {() => Promise<void>} loadQueue
+     * @returns {Promise<queryZpid>}
+     */
+    async handleInitialPage(queryZpid, loadQueue) {
+        const { crawler, input } = this.globalContext;
+        const { page, proxyInfo, autoscaledPool, session } = this.context;
 
         try {
             log.info('Trying to get queryId...');
@@ -90,17 +118,16 @@ class PageHandler {
                     autoscaledPool.maxConcurrency = 10;
                 }
 
-                // now that we initialized, we can add the requests
-                for (const req of startUrls) {
-                    await requestQueue.addRequest(req);
-                }
-
                 log.info('Got queryId, continuing...');
             }
         } catch (e) {
             session.retire();
             throw e;
         }
+
+        fns.changeHandlePageTimeout(crawler, input.handlePageTimeoutSecs || 3600);
+
+        await loadQueue();
 
         return queryZpid;
     }
@@ -115,7 +142,7 @@ class PageHandler {
         const url = page.url();
         log.debug(`Scraping ${url}`);
 
-        if (url.startsWith('/b/') || !+request.userData.zpid) {
+        if (url.includes('/b/') || !+request.userData.zpid) {
             const nextData = await page.$eval('[id="__NEXT_DATA__"]', (s) => JSON.parse(s.innerHTML));
 
             if (!nextData) {
@@ -165,7 +192,7 @@ class PageHandler {
                 const loaded = JSON.parse(JSON.parse(await script.evaluate((/** @type {any} */ s) => s.innerHTML)).apiCache);
 
                 for (const key in loaded) { // eslint-disable-line
-                    if (key.includes('RenderQuery') && loaded[key].property) {
+                    if (key.includes('FullRenderQuery') && loaded[key].property) {
                         await this.extendOutputFunction(loaded[key].property, {
                             request,
                             page,
@@ -177,9 +204,9 @@ class PageHandler {
                     }
                 }
             } catch (/** @type {any} */ e) {
-                if (e.message.includes('Cannot read property')) {
+                if (/(Reference|Type|Syntax)Error/.test(e.message)) {
                     // this is a faulty extend output function
-                    log.error(`Your Extend Output Function errored:\n\n    ${e}\n\n`, { url: page.url() });
+                    log.error(`Your Extend Output Function errored:\n\n    ${e.message}\n\n`, { url: page.url() });
                 }
                 log.debug(e);
             }
@@ -191,64 +218,109 @@ class PageHandler {
     }
 
     /**
-     *
      * @param {ReturnType<typeof createQueryZpid>} queryZpid
      */
     async handleZpidsPage(queryZpid) {
-        // Extract all homes by input ZPIDs
-        const { input } = this.globalContext;
+        const { request } = this.context;
+        const { zpids } = request.userData;
 
-        log.info(`Scraping ${input.zpids.length} zpids`);
-
-        for (const zpid of input.zpids) {
-            await this.processZpid(zpid, '', queryZpid);
-
-            if (this.isOverItems()) {
-                break;
-            }
+        if (!zpids?.length) {
+            log.debug('zpids userData is empty');
+            return;
         }
+
+        return this._extractZpidsFromResults(zpids, queryZpid);
+    }
+
+    /**
+     * @param {ZpidResult[]} zpids
+     * @param {string} url
+     * @param {string} hash
+     */
+    async _addZpidsRequest(zpids, url, hash) {
+        const { requestQueue } = this.context;
+
+        if (this.isOverItems()) {
+            return;
+        }
+
+        return requestQueue?.addRequest({
+            url,
+            uniqueKey: fns.quickHash(['ZPIDS', hash]),
+            userData: {
+                label: LABELS.ENRICHED_ZPIDS,
+                zpids,
+            },
+        });
     }
 
     /**
      *
      * @param {string} label
-     * @param {ReturnType<typeof createQueryZpid>} queryZpid
-     * @returns
      */
-    async handleQueryAndSearchPage(label, queryZpid) {
-        const { request: { userData: { term } }, session } = this.context;
-
-        /** @type {any[]} */
-        let queryStates = [];
-        let totalCount = 0;
-        let shouldContinue = true;
+    async handleQueryAndSearchPage(label) {
+        const { request, session, page } = this.context;
 
         try {
             if (label === LABELS.SEARCH) {
+                const { term } = request.userData;
                 log.info(`Searching for "${term}"`);
                 await this._waitForSearchPageToLoad();
             }
 
-            const pageQs = await this._getPageQs();
-            const results = this.__getPageQsResults(pageQs);
+            const [pageQs, loadedQs] = await Promise.all([
+                this._getPageQs(),
+                this.pendingPromise,
+            ]);
 
-            shouldContinue = await this._processPageQsResults(results, queryZpid);
+            const merged = this._getMergedSearchResults([
+                loadedQs?.result,
+                pageQs,
+            ]);
 
-            if (shouldContinue) {
-                const extracted = await this._extractQueryStatesForCurrentPage(pageQs);
-                queryStates = Object.values(extracted.state);
-                totalCount = extracted.totalCount;
+            const containsResults = this._validateQueryStatesResults(merged.results, merged.categoryTotals);
+
+            if (!containsResults) {
+                // this silently finishes when there's really no results
+                // when it's an error, this check won't be reached
+                return;
             }
+
+            // the loaded queryState is usually better than the one from page load
+            const queryState = loadedQs?.searchQueryState
+                ?? pageQs.queryState;
+
+            await this._addZpidsRequest(
+                merged.results,
+                page.url(),
+                fns.getUniqueKeyFromQueryState(queryState),
+            );
+
+            log.info(`Got ${
+                merged.results.length}/${merged.categoryTotals
+            } (this number is an approximation) from ${
+                page.url().split('?')[0]
+            }`);
+
+            await Promise.allSettled([
+                this._tryEnqueueMapSplits(queryState),
+                this._tryEnqueuePaginationPages(queryState),
+            ]);
+
+            await this._extractQueryStatesForCurrentPage(queryState);
         } catch (/** @type {any} */ e) {
             session.retire();
             log.debug('handleQueryAndSearchPage', { error: e.message });
-            throw new Error('Retrying search');
-        }
 
-        log.debug('searchState', { queryStates });
+            if (label === LABELS.SEARCH) {
+                throw new Error('Retrying search');
+            }
 
-        if (shouldContinue && queryStates?.length) {
-            await this._processExtractedQueryStates(queryStates, totalCount, queryZpid);
+            if (e.message.includes('Unexpected')) {
+                throw new Error('Request blocked, retrying...');
+            }
+
+            throw e;
         }
     }
 
@@ -257,14 +329,28 @@ class PageHandler {
      * @param {string} zpid
      * @param {string} detailUrl
      * @param {ReturnType<typeof createQueryZpid>} queryZpid
-     * @returns
+     * @param {boolean} relaxed Relaxed results are incomplete, so needs full page load
      */
-    async processZpid(zpid, detailUrl, queryZpid) {
+    async processZpid(zpid, detailUrl, queryZpid, relaxed = false) {
         const { page, request, requestQueue, session } = this.context;
         const { zpids } = this.globalContext;
 
         if (this.isOverItems()) {
             return;
+        }
+
+        const enqueueZpid = () => requestQueue.addRequest({
+            url: new URL(detailUrl || `/homedetails/${zpid}_zpid/`, 'https://www.zillow.com').toString(),
+            userData: {
+                label: LABELS.DETAIL,
+                zpid: +zpid,
+            },
+            uniqueKey: zpid || detailUrl,
+        }, { forefront: true });
+
+        if (relaxed) {
+            log.debug('Enqueuing relaxed zpid', { zpid });
+            return enqueueZpid();
         }
 
         const invalidNonNumeric = 'Invalid non-numeric zpid';
@@ -311,20 +397,13 @@ class PageHandler {
                 return;
             }
 
-            log.debug('processZpid', { error: e });
+            log.debug('processZpid', { error: e.message });
 
             // add as a separate detail for retrying
-            await requestQueue.addRequest({
-                url: new URL(detailUrl || `/homedetails/${zpid}_zpid/`, 'https://www.zillow.com').toString(),
-                userData: {
-                    label: LABELS.DETAIL,
-                    zpid: +zpid,
-                },
-                uniqueKey: zpid || detailUrl,
-            }, { forefront: true });
+            await enqueueZpid();
 
             this.anyErrors = true;
-            session.markBad();
+            session.retire();
         } finally {
             if (!noWait) {
                 await sleep(100);
@@ -334,6 +413,7 @@ class PageHandler {
 
     isOverItems(extra = 0) {
         const { zpids, input } = this.globalContext;
+
         return typeof input.maxItems === 'number' && input.maxItems > 0
             ? zpids.size + extra >= input.maxItems
             : false;
@@ -349,7 +429,7 @@ class PageHandler {
         const text = '#search-box-input';
         const btn = 'button#search-icon';
 
-        await page.waitForRequest((/** @type {any} */ req) => req.url().includes('/login'));
+        await page.waitForRequest((req) => req.url().includes('/login'));
 
         await Promise.all([
             page.waitForSelector(text),
@@ -358,7 +438,7 @@ class PageHandler {
 
         await page.focus(text);
         await Promise.all([
-            page.waitForResponse((/** @type {any} */ res) => res.url().includes('suggestions')),
+            page.waitForResponse((res) => res.url().includes('suggestions')),
             page.type(text, request.userData.term, { delay: 150 }),
         ]);
 
@@ -394,12 +474,21 @@ class PageHandler {
             throw new Error(`Unexpected page address ${page.url()}, use a better keyword for searching or proper state or city name. Will retry...`);
         }
 
+        await this.checkForCaptcha();
+    }
+
+    async checkForCaptcha() {
+        const { page, session } = this.context;
+
         if (await page.$('.captcha-container')) {
             session.retire();
             throw new Error('Captcha found when searching, retrying...');
         }
     }
 
+    /**
+     * @returns {Promise<{ queryState: SearchQueryState } & GetSearchPageState>}
+     */
     async _getPageQs() {
         const { page } = this.context;
 
@@ -413,178 +502,133 @@ class PageHandler {
     }
 
     /**
+     * Objects come from GetSearchPageState.htm call
      *
-     * @param {any} pageQs
+     * @param {Array<GetSearchPageState | undefined>} pageQs
      * @returns array of list results and map results for cat1 and cat2 merged
      */
-    __getPageQsResults(pageQs) {
-        return [
-            ...pageQs?.cat1?.searchResults?.listResults ?? [],
-            ...pageQs?.cat1?.searchResults?.mapResults ?? [],
-            ...pageQs?.cat2?.searchResults?.listResults ?? [],
-            ...pageQs?.cat2?.searchResults?.mapResults ?? [],
-        ];
+    _getMergedSearchResults(pageQs) {
+        const { zpids } = this.globalContext;
+        const set = new Set();
+        /** @type {Array<ZpidResult>} */
+        const results = [];
+
+        return pageQs.reduce((out, qs) => {
+            [
+                ...qs?.cat1?.searchResults?.listResults ?? [],
+                ...qs?.cat1?.searchResults?.mapResults ?? [],
+                ...qs?.cat1?.searchResults?.relaxedResults ?? [],
+                ...qs?.cat2?.searchResults?.listResults ?? [],
+                ...qs?.cat2?.searchResults?.mapResults ?? [],
+                ...qs?.cat2?.searchResults?.relaxedResults ?? [],
+            ]
+                .map(({ zpid, detailUrl, relaxed }) => ({
+                    zpid: `${zpid}`,
+                    detailUrl: detailUrl || '',
+                    relaxed: relaxed || false,
+                }))
+                .filter((s) => {
+                    return !!s.zpid
+                        && +s.zpid == s.zpid
+                        && !zpids.has(s.zpid)
+                        && !set.has(s.zpid);
+                })
+                .forEach((item) => {
+                    set.add(item.zpid);
+                    out.results.push(item);
+                });
+
+            out.categoryTotals = Math.max(
+                out.categoryTotals,
+                qs?.categoryTotals?.cat1?.totalResultCount ?? 0,
+                qs?.categoryTotals?.cat2?.totalResultCount ?? 0,
+            );
+
+            return out;
+        }, {
+            results,
+            categoryTotals: -Infinity,
+        });
     }
 
     /**
+     * Enqueues all the possible combinations for extracting.
+     * Uses a callback to not lose progress if any of the requests
+     * fail.
      *
-     * @param {any[]} results
-     * @param {ReturnType<typeof createQueryZpid>} queryZpid
-     * @returns result of shouldContinue
-     */
-    async _processPageQsResults(results, queryZpid) {
-        let shouldContinue = true;
-
-        for (const { zpid, detailUrl } of results) {
-            await this.dump(zpid, results);
-
-            if (zpid) {
-                if (this.isOverItems()) {
-                    shouldContinue = false;
-                    break;
-                }
-                await this.processZpid(zpid, detailUrl, queryZpid);
-            }
-        }
-
-        return shouldContinue;
-    }
-
-    /**
-     *
-     * @param {any} pageQs
-     * @returns extracted query states with total count stored
+     * @param {SearchQueryState} pageQs
      */
     async _extractQueryStatesForCurrentPage(pageQs) {
         const { request, page } = this.context;
         const { input } = this.globalContext;
 
-        const pageNumber = request.userData.pageNumber ? request.userData.pageNumber : 1;
+        /** @type {number} */
+        const pageNumber = request.userData.pageNumber || 1;
 
-        const extractedQueryStates = await extractQueryStates(request, input.type, page, pageQs, pageNumber);
-        const states = Object.values(extractedQueryStates);
-        const sumTotalCount = states.reduce((out, { totalCount }) => (out + totalCount), 0);
+        return extractQueryStates(
+            request.userData.ignoreFilter,
+            input.type,
+            page,
+            pageQs,
+            async ({ url, result, hash }) => {
+                const { categoryTotals, results } = this._getMergedSearchResults([result]);
 
-        this.globalContext.maxZpidsFound = Math.max(sumTotalCount, this.globalContext.maxZpidsFound);
-
-        if (sumTotalCount > 0) {
-            log.info(`Found ${sumTotalCount} results on page ${pageNumber}.`);
-        }
-
-        return {
-            state: states.map(({ state }) => state),
-            totalCount: sumTotalCount,
-        };
-    }
-
-    /**
-     *
-     * @param {any[]} queryStates
-     * @param {Number} totalCount
-     * @param {ReturnType<typeof createQueryZpid>} queryZpid
-     * @returns
-     */
-    async _processExtractedQueryStates(queryStates, totalCount, queryZpid) {
-        const { page, request: { uniqueKey, userData: { pageNumber } } } = this.context;
-        const { zpids } = this.globalContext;
-        const currentPage = pageNumber || 1;
-
-        const results = this._mergeListResultsMapResults(queryStates);
-        const result = await this._validateQueryStatesResults(results, queryStates, totalCount);
-
-        if (result === false) {
-            return;
-        }
-
-        for (const { qs } of queryStates) {
-            if (zpids.size >= this.globalContext.maxZpidsFound) {
-                return; // all results extracted already, performance optimization
-            }
-
-            log.info(`Searching homes at ${JSON.stringify(qs.mapBounds)}`, {
-                url: page.url(),
-            });
-
-            if (currentPage === 1) {
-                await this._tryEnqueueMapSplits(qs, totalCount);
-                await this._tryEnqueuePaginationPages(qs, totalCount);
-            }
-
-            await this._extractZpidsFromResults(results, queryZpid);
-        }
-
-        if (log.LEVELS.DEBUG === log.getLevel()) {
-            await Apify.setValue(`QUERY-STATES-${uniqueKey}`, queryStates);
-        }
-    }
-
-    /**
-     *
-     * @param {any[]} queryStates
-     * @returns merged list results and map results
-     */
-    _mergeListResultsMapResults(queryStates) {
-        return queryStates.flatMap(({ searchState }) => [
-            ...searchState?.cat1?.searchResults?.mapResults ?? [],
-            ...searchState?.cat1?.searchResults?.listResults ?? [],
-            ...searchState?.cat2?.searchResults?.mapResults ?? [],
-            ...searchState?.cat2?.searchResults?.listResults ?? [],
-        ]).flat(2);
+                if (categoryTotals > 0 || results.length) {
+                    await this._addZpidsRequest(results, url, hash);
+                }
+            },
+            pageNumber,
+        );
     }
 
     /**
      * Retires session and throws error if no results were found
      * @param {any[]} results
-     * @param {any[]} queryStates
      * @param {Number} totalCount
      */
-    async _validateQueryStatesResults(results, queryStates, totalCount) {
+    _validateQueryStatesResults(results, totalCount) {
         const { session } = this.context;
 
-        if (!results?.length) {
+        if (!(results?.length)) {
             if (totalCount > 0) {
                 log.debug(`No results, retiring session.`);
                 session.retire();
-                await Apify.setValue(`SEARCHSTATE-${Math.random()}`, queryStates);
+
                 throw new Error(`No map results but result count is ${totalCount}`);
             } else {
-                log.debug('Really zero results');
+                log.debug('Really zero results', { totalCount });
                 return false;
             }
         }
+
+        return true;
     }
 
     /**
+     * This takes a LOT of time, but can get thousands of results
      *
-     * @param {{
-     *   mapBounds: {
-     *   mapZoom: Number,
-     *   south: Number,
-     *   east: Number,
-     *   north: Number,
-     *   west: Number,
-     * }}} queryState,
-     * @param {Number} totalCount
+     * @param {SearchQueryState} queryState
      */
-    async _tryEnqueueMapSplits(queryState, totalCount) {
+    async _tryEnqueueMapSplits(queryState) {
         const { request } = this.context;
         const { input } = this.globalContext;
 
-        const mapSplittingThreshold = input.splitThreshold || RESULTS_LIMIT;
+        const maxLevel = input.maxLevel ?? 0;
 
-        if (totalCount >= mapSplittingThreshold) {
-            const currentSplitCount = request.userData.splitCount ?? 0;
-            const maxLevel = input.maxLevel ?? 5;
+        if (this.isOverItems() || maxLevel === 0) {
+            log.debug('Not trying to enqueue map splits');
+            return;
+        }
 
-            if (currentSplitCount >= maxLevel) {
-                log.info('Over max level');
-            } else {
-                // Split map and enqueue sub-rectangles
-                const splits = splitQueryState(queryState);
-                log.info(`Splitting map into ${splits.length} squares and zooming in`);
-                const splitCount = currentSplitCount + 1;
-                await this._enqueueMapSplits(splits, splitCount);
-            }
+        const currentSplitCount = request.userData.splitCount ?? 0;
+
+        if (currentSplitCount >= maxLevel) {
+            log.info('Over max level, no map split will take place', { currentSplitCount, maxLevel });
+        } else {
+            const splits = splitQueryState(queryState);
+            const splitCount = currentSplitCount + 1;
+            log.info(`Splitting map into ${splits.length} squares and zooming in, ${splitCount} splits`);
+            await this._enqueueMapSplits(splits, splitCount);
         }
     }
 
@@ -592,51 +636,49 @@ class PageHandler {
      * Zillow doesn't always provide all map results from the current page,
      * even if their count is < RESULTS_LIMIT. E.g. for 115 map results it only gives 84.
      * But they can still be extracted from list results using pagination search.
-     * @param {any} searchQueryState
-     * @param {Number} totalCount
+     *
+     * @param {SearchQueryState} searchQueryState
      */
-    async _tryEnqueuePaginationPages(searchQueryState, totalCount) {
-        const { requestQueue, page } = this.context;
-        const { zpids } = this.globalContext;
+    async _tryEnqueuePaginationPages(searchQueryState) {
+        const { requestQueue, page, request } = this.context;
 
-        if (totalCount > 0 && zpids.size < this.globalContext.maxZpidsFound) {
-            log.info(`Found ${totalCount} results, pagination pages will be enqueued.`);
-            const LISTINGS_PER_PAGE = 40;
+        if (this.isOverItems() || !!request.userData.pageNumber) {
+            return;
+        }
 
-            // first pagination page is already fetched successfully, pages are ordered from 1 (not from 0)
-            const pagesCount = Math.min((totalCount / LISTINGS_PER_PAGE) + 1, PAGES_LIMIT);
+        const url = new URL(page.url());
+        url.pathname = url.pathname === '/' ? '/homes/' : url.pathname;
 
-            const url = new URL(page.url());
-            url.pathname = url.pathname === '/' ? '/homes/' : url.pathname;
+        for (let i = 2; i <= 20; i++) {
+            /** @type {SearchQueryState} */
+            const queryState = {
+                ...searchQueryState,
+                pagination: {
+                    currentPage: i,
+                },
+            };
 
-            for (let i = 2; i <= pagesCount; i++) {
-                url.searchParams.set('searchQueryState', JSON.stringify({
-                    ...searchQueryState,
-                    pagination: {
-                        currentPage: i,
-                    },
-                }));
+            url.searchParams.set('searchQueryState', JSON.stringify(queryState));
 
-                const uniqueKey = quickHash(`${JSON.stringify(searchQueryState)}`);
+            const uniqueKey = fns.getUniqueKeyFromQueryState(queryState);
 
-                log.debug(`Enqueuing pagination page number ${i} for url: ${url.toString()}`);
-                await requestQueue.addRequest({
-                    url: url.toString(),
-                    userData: {
-                        searchQueryState,
-                        label: LABELS.QUERY,
-                        pageNumber: i,
-                    },
-                    uniqueKey,
-                });
-            }
+            log.debug(`Enqueuing pagination page number ${i} for url: ${url.toString()}`, { uniqueKey });
+
+            await requestQueue.addRequest({
+                url: url.toString(),
+                userData: {
+                    label: LABELS.QUERY,
+                    pageNumber: i,
+                },
+                uniqueKey,
+            });
         }
     }
 
     /**
      *
-     * @param {any[]} splits
-     * @param {Number} splitCount
+     * @param {SearchQueryState[]} splits
+     * @param {number} splitCount
      */
     async _enqueueMapSplits(splits, splitCount) {
         const { requestQueue, page } = this.context;
@@ -646,16 +688,19 @@ class PageHandler {
                 break;
             }
 
-            const uniqueKey = quickHash(`${JSON.stringify(searchQueryState)}`);
+            const uniqueKey = fns.getUniqueKeyFromQueryState(searchQueryState);
+
             log.debug('queryState', { searchQueryState, uniqueKey });
             const url = new URL(page.url());
+
             url.pathname = url.pathname === '/' ? '/homes/' : url.pathname;
-            url.searchParams.set('searchQueryState', JSON.stringify(searchQueryState));
-            url.searchParams.set('pagination', '{}');
 
-            log.debug(`Enqueuing map split request: ${url.toString()}`);
+            url.searchParams.set('searchQueryState', JSON.stringify({
+                ...searchQueryState,
+                pagination: {},
+            }));
 
-            await requestQueue.addRequest({
+            const result = await requestQueue.addRequest({
                 url: url.toString(),
                 userData: {
                     searchQueryState,
@@ -664,33 +709,56 @@ class PageHandler {
                 },
                 uniqueKey,
             });
+
+            log.debug(`${result.wasAlreadyPresent ? `Didn't enqueue` : 'Enqueued'} map split request`, { url: url.toString() });
         }
+    }
+
+    startCounter() {
+        const { zpids } = this.globalContext;
+
+        let lastCount = 0;
+
+        const extracted = () => {
+            if (zpids.size !== lastCount) {
+                lastCount = zpids.size;
+                log.info(`Extracted total ${zpids.size}`);
+            }
+        };
+
+        const interval = setInterval(extracted, 10000);
+
+        return () => {
+            clearInterval(interval);
+
+            if (!this.anyErrors) {
+                extracted();
+            }
+        };
     }
 
     /**
      * Extracts zpids from results, processes zpids and sets extraction info interval
-     * @param {any[]} results
+     *
+     * @param {Array<ZpidResult | string>} results
      * @param {ReturnType<typeof createQueryZpid>} queryZpid
      */
     async _extractZpidsFromResults(results, queryZpid) {
-        const { zpids } = this.globalContext;
+        if (this.isOverItems()) {
+            return;
+        }
 
         if (results.length > 0) {
-            let lastCount = 0;
-            const extracted = () => {
-                if (zpids.size !== lastCount) {
-                    lastCount = zpids.size;
-                    log.info(`Extracted total ${zpids.size}`);
-                }
-            };
-            const interval = setInterval(extracted, 10000);
+            const stop = this.startCounter();
 
             try {
-                for (const { zpid, detailUrl } of results) {
-                    await this.dump(zpid, results);
+                for (const result of results) {
+                    const { zpid, detailUrl = '', relaxed = false } = typeof result === 'string'
+                        ? { zpid: result } // plain string array
+                        : result;
 
                     if (zpid) {
-                        await this.processZpid(zpid, detailUrl, queryZpid);
+                        await this.processZpid(zpid, detailUrl, queryZpid, relaxed);
 
                         if (this.isOverItems()) {
                             break; // optimize runtime
@@ -698,10 +766,7 @@ class PageHandler {
                     }
                 }
             } finally {
-                if (!this.anyErrors) {
-                    extracted();
-                }
-                clearInterval(interval);
+                stop();
             }
         }
     }

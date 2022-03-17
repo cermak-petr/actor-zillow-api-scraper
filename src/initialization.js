@@ -1,5 +1,5 @@
 const Apify = require('apify');
-const { TYPES, LABELS } = require('./constants');
+const { TYPES, LABELS, ORIGIN, Input } = require('./constants');
 
 const fns = require('./functions');
 
@@ -15,29 +15,56 @@ const {
 
 /**
  * Throws error if the provided input is invalid.
- * @param {{ search: String, startUrls: any[], zpids: any[] }} input
+ * @param {{ search: String, startUrls: any[], zpids: any[], zipcodes: any[] }} input
  */
 const validateInput = (input) => {
-    if (!(input.search && input.search.trim().length > 0) && !input.startUrls && !input.zpids) {
-        throw new Error('Either "search", "startUrls" or "zpids" attribute has to be set!');
+    if (!(input.search && input.search.trim().length > 0)
+        && !(input.startUrls?.length)
+        && !(input.zpids?.length)
+        && !(input.zipcodes?.length)
+    ) {
+        throw new Error('Either "search", "startUrls", "zipcodes" or "zpids" attribute has to be set!');
     }
 };
 
 /**
- *
- * @param {{ search: string, startUrls: any[], type: string, zpids: any[] }} input
- * @returns startUrls
+ * Removes pagination for given URL
+ * @param {string} url
  */
-const getInitializedStartUrls = async (input) => {
-    /**
-     * @type {Apify.RequestOptions[]}
-     */
-    const startUrls = [];
+const cleanUpUrl = (url) => {
+    const nUrl = new URL(url, ORIGIN);
+    /** @type {import('./constants').SearchQueryState | null} */
+    let searchQueryState = null;
+    nUrl.pathname = '/homes/';
 
-    if (input.search && input.search.trim()) {
+    // pagination on the JSON variable
+    if (nUrl.searchParams.has('searchQueryState')) {
+        searchQueryState = JSON.parse(nUrl.searchParams.get('searchQueryState'));
+
+        nUrl.searchParams.set('searchQueryState', JSON.stringify({
+            ...searchQueryState,
+            pagination: {},
+        }));
+    }
+
+    return {
+        url: nUrl,
+        searchQueryState,
+    };
+};
+
+/**
+ * Lazy load the RequestQueue. Can take a while depending of the number
+ * of URLs from input and the handlePageFunction might timeout
+ *
+ * @param {Input} input
+ * @param {Apify.RequestQueue} rq
+ */
+const getInitializedStartUrls = (input, rq) => async () => {
+    if (input.search?.trim()) {
         const term = input.search.trim();
 
-        startUrls.push({
+        await rq.addRequest({
             url: 'https://www.zillow.com',
             uniqueKey: `${term}`,
             userData: {
@@ -47,7 +74,7 @@ const getInitializedStartUrls = async (input) => {
         });
     }
 
-    if (input.startUrls && input.startUrls.length) {
+    if (input.startUrls?.length) {
         if (input.type) {
             log.warning(`Input type "${input.type}" will be ignored as the value is derived from start url.
              Check if your start urls match the desired home status.`);
@@ -66,26 +93,63 @@ const getInitializedStartUrls = async (input) => {
             }
 
             const userData = getUrlData(req.url);
+            const { url, searchQueryState } = cleanUpUrl(req.url);
 
-            startUrls.push({
-                url: req.url,
+            const uniqueKey = (() => {
+                if (searchQueryState) {
+                    return fns.getUniqueKeyFromQueryState(searchQueryState);
+                }
+
+                return url;
+            })();
+
+            await rq.addRequest({
+                url: url.toString(),
                 userData,
-                uniqueKey: `${userData.zpid || req.url}`,
+                uniqueKey: `${userData.zpid || uniqueKey}`,
             });
         }
     }
 
-    if (input.zpids && input.zpids.length) {
-        startUrls.push({
+    if (input.zpids?.length) {
+        await rq.addRequest({
             url: 'https://www.zillow.com/',
             uniqueKey: 'ZPIDS',
             userData: {
                 label: LABELS.ZPIDS,
+                zpids: [].concat(input.zpids).filter((value) => /^\d+$/.test(value)),
             },
         });
     }
 
-    return startUrls;
+    if (input.zipcodes?.length) {
+        log.info(`Trying to add ${input.zipcodes.length} zipcodes`);
+        let count = 0;
+
+        for (const zipcode of input.zipcodes) {
+            // simple regex for testing the 5 digit zipcodes
+            if (/^(?!0{3})[0-9]{3,5}$/.test(zipcode)) {
+                const cleanZip = `${zipcode}`.replace(/[^\d]+/g, '');
+
+                const result = await rq.addRequest({
+                    url: `https://www.zillow.com/homes/${cleanZip}_rb/`,
+                    uniqueKey: `ZIP${cleanZip}`,
+                    userData: {
+                        label: LABELS.QUERY,
+                        zipcode: cleanZip,
+                    },
+                });
+
+                if (!result.wasAlreadyPresent) {
+                    count++;
+                }
+            } else {
+                throw new Error(`Invalid zipcode provided: ${zipcode}`);
+            }
+        }
+
+        log.info(`Added ${count} zipcodes`);
+    }
 };
 
 /**
@@ -122,7 +186,7 @@ const initializePreLaunchHooks = (input) => {
 const getExtendOutputFunction = async ({ zpids, input }, minMaxDate, getSimpleResult) => {
     const extendOutputFunction = await extendFunction({
         map: async (data) => getSimpleResult(data),
-        filter: async ({ data }) => {
+        filter: async ({ data }, { request }) => {
             if (isOverItems({ zpids, input })) {
                 return false;
             }
@@ -135,7 +199,7 @@ const getExtendOutputFunction = async ({ zpids, input }, minMaxDate, getSimpleRe
                 return false;
             }
 
-            if (input.startUrls) {
+            if (request.userData.ignoreFilter === true) {
                 // ignore input.type when it is set in start url
                 return true;
             }

@@ -1,7 +1,13 @@
 const Apify = require('apify');
 const { LABELS, INITIAL_URL, URL_PATTERNS_TO_BLOCK } = require('./constants');
 const { PageHandler } = require('./page-handler');
-const { getExtendOutputFunction, getSimpleResultFunction, validateInput, getInitializedStartUrls, initializePreLaunchHooks } = require('./initialization');
+const {
+    getExtendOutputFunction,
+    getSimpleResultFunction,
+    validateInput,
+    getInitializedStartUrls,
+    initializePreLaunchHooks,
+} = require('./initialization');
 const fns = require('./functions');
 
 const {
@@ -46,19 +52,27 @@ Apify.main(async () => {
     const zpidsValues = await Apify.getValue('STATE');
     const zpids = new Set(zpidsValues);
 
+    /**
+     * @type {{
+     *   zpids: Set<string>,
+     *   input: PageHandler['globalContext']['input'],
+     *   crawler: Apify.PuppeteerCrawler,
+     * }}
+     */
     const globalContext = {
         zpids,
         input,
-        maxZpidsFound: 0, // should store biggest discovered zpids count (typically from the first loaded search page before map splitting)
     };
 
-    Apify.events.on('migrating', async () => {
+    const persistState = async () => {
         await Apify.setValue('STATE', [...zpids.values()]);
-    });
+    };
+
+    Apify.events.on('aborting', persistState);
+    Apify.events.on('migrating', persistState);
 
     const requestQueue = await Apify.openRequestQueue();
-
-    const startUrls = await getInitializedStartUrls(input);
+    const loadQueue = getInitializedStartUrls(input, requestQueue);
 
     /**
      * @type {ReturnType<typeof createQueryZpid> | null}
@@ -72,6 +86,8 @@ Apify.main(async () => {
 
     if (savedQueryId?.queryId && savedQueryId?.clientVersion) {
         queryZpid = createQueryZpid(savedQueryId.queryId, savedQueryId.clientVersion);
+
+        await loadQueue();
     } else {
         await requestQueue.addRequest({
             url: INITIAL_URL,
@@ -94,7 +110,6 @@ Apify.main(async () => {
         key: 'extendScraperFunction',
         helpers: {
             proxyConfig,
-            startUrls,
             getUrlData,
             requestQueue,
             get queryZpid() {
@@ -140,11 +155,18 @@ Apify.main(async () => {
             fingerprintGeneratorOptions: {
                 browsers: ['chrome'],
                 devices: ['desktop'],
-                locales: ['en', 'en-US'],
+                locales: ['en-US', 'en'],
             },
         },
         maxOpenPagesPerBrowser: 1,
         retireBrowserAfterPageCount: 1,
+        prePageCloseHooks: [async (page, browserController) => {
+            const { request } = crawler.crawlingContexts.get(browserController.launchContext.id);
+
+            if (request?.errorMessages?.some((error) => error.includes('ERR_TOO_MANY_REDIRECTS'))) {
+                request.noRetry = true;
+            }
+        }],
     };
 
     // Create crawler
@@ -172,13 +194,16 @@ Apify.main(async () => {
                 throw new Error('Ending scrape');
             }
 
-
             /** @type {any} */
             await puppeteer.blockRequests(page, {
-                urlPatterns: URL_PATTERNS_TO_BLOCK.concat(request.userData.label === LABELS.DETAIL ? [
-                    'maps.googleapis.com',
-                    '.js',
-                ] : []),
+                urlPatterns: URL_PATTERNS_TO_BLOCK.concat([
+                    LABELS.DETAIL,
+                    LABELS.ZPIDS,
+                    LABELS.ENRICHED_ZPIDS,
+                ].includes(request.userData.label) ? [
+                        'maps.googleapis.com',
+                        '.js',
+                    ] : []),
             });
 
             await extendScraperFunction(undefined, {
@@ -187,13 +212,10 @@ Apify.main(async () => {
                 label: 'GOTO',
             });
 
-            const { label } = request.userData;
-
-            gotoOptions.timeout = 60000;
-            gotoOptions.waitUntil = label === LABELS.DETAIL
-                ? 'domcontentloaded'
-                : 'load';
+            gotoOptions.timeout = 45000;
+            gotoOptions.waitUntil = 'domcontentloaded';
         }],
+        persistCookiesPerSession: false,
         postNavigationHooks: [async ({ page }) => {
             try {
                 if (!page.isClosed()) {
@@ -217,35 +239,29 @@ Apify.main(async () => {
         }],
         browserPoolOptions,
         maxConcurrency: !queryZpid ? 1 : 10,
-        handlePageFunction: async ({ page, request, crawler: { autoscaledPool }, session, response, proxyInfo }) => {
-            const context = { page, request, crawler: { requestQueue, autoscaledPool }, session, response, proxyInfo };
+        handlePageFunction: async (context) => {
+            const { page, request, session, response } = context;
             const pageHandler = new PageHandler(context, globalContext, extendOutputFunction);
 
             if (!response || pageHandler.isOverItems()) {
-                await page.close();
                 if (!response) {
                     throw new Error('No response from page');
                 }
                 return;
             }
 
-            // Retire browser if captcha is found
-            if (await page.$('.captcha-container')) {
-                session.retire();
-                throw new Error('Captcha found, retrying...');
-            }
+            await pageHandler.checkForCaptcha();
 
             const { label } = request.userData;
 
             if (label === LABELS.INITIAL || !queryZpid) {
-                queryZpid = await pageHandler.handleInitialPage(queryZpid, startUrls);
-                fns.changeHandlePageTimeout(crawler, input.handlePageTimeoutSecs || 3600);
+                queryZpid = await pageHandler.handleInitialPage(queryZpid, loadQueue);
             } else if (label === LABELS.DETAIL) {
                 await pageHandler.handleDetailPage();
-            } else if (label === LABELS.ZPIDS) {
+            } else if (label === LABELS.ZPIDS || label === LABELS.ENRICHED_ZPIDS) {
                 await pageHandler.handleZpidsPage(queryZpid);
             } else if (label === LABELS.QUERY || label === LABELS.SEARCH) {
-                await pageHandler.handleQueryAndSearchPage(label, queryZpid);
+                await pageHandler.handleQueryAndSearchPage(label);
             }
 
             await extendScraperFunction(undefined, {
@@ -264,11 +280,14 @@ Apify.main(async () => {
         },
         handleFailedRequestFunction: async ({ request, error }) => {
             // This function is called when the crawling of a request failed too many times
-            log.exception(error, `\n\nRequest ${request.url} failed too many times.\n\n`);
+            if (request.retryCount) {
+                log.error(request.noRetry ? 'Stopped retrying request' : `${request.url} failed too many times`, { error: error.message });
+            }
         },
     });
 
     const { crawler } = crawlerWrapper;
+    globalContext.crawler = crawler;
 
     if (!isDebug) {
         fns.patchLog(crawler);
