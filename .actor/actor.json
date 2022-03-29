@@ -33,7 +33,6 @@
                             {
                                 "label": "Photo",
                                 "format": "image",
-                                "field": "photos[0]",
                                 "imageUrlField": "$photos[0]"
                             },
                             {
