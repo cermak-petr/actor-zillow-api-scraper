@@ -33,7 +33,8 @@
                             {
                                 "label": "Photo",
                                 "format": "image",
-                                "field": "photos[0]"
+                                "field": "photos[0]",
+                                "imageUrlField": "$photos[0]"
                             },
                             {
                               "label": "Home status",
