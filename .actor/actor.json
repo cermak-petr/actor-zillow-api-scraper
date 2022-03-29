@@ -15,6 +15,7 @@
                     "description": "Selected fields from the dataset",
                     "transformation": {
                         "fields": [
+                            "photos",
                             "homeStatus",
                             "price",
                             "address",
@@ -30,11 +31,16 @@
                         "component": "table",
                         "columns": [
                             {
-                                "label": "Home status",
-                                "format": "text",
-                                "field": "homeStatus"
+                                "label": "Photo",
+                                "format": "image",
+                                "field": "photos[0]"
                             },
                             {
+                              "label": "Home status",
+                              "format": "text",
+                              "field": "homeStatus"
+                          },
+                          {
                                 "label": "Price",
                                 "format": "number",
                                 "field": "price"
@@ -60,31 +66,26 @@
                                 "field": "address.zipcode"
                             },
                             {
-                                "label": "yearBuilt",
-                                "format": "text",
-                                "field": "yearBuilt"
-                            },
-                            {
-                                "label": "bedrooms",
-                                "format": "text",
+                                "label": "Bedrooms",
+                                "format": "number",
                                 "field": "bedrooms"
                             },
                             {
-                                "label": "bathrooms",
-                                "format": "text",
+                                "label": "Bathrooms",
+                                "format": "number",
                                 "field": "bathrooms"
                             },
                             {
-                                "label": "livingArea",
-                                "format": "text",
+                                "label": "Living area",
+                                "format": "number",
                                 "field": "livingArea"
                             },
                             {
-                                "label": "lotSize",
-                                "format": "text",
+                                "label": "Lot size",
+                                "format": "number",
                                 "field": "lotSize"
                             },
-                            { "label": "URL", "format": "text", "field": "urL" }
+                            { "label": "URL", "format": "link", "field": "urL" }
                         ]
                     }
                 }
