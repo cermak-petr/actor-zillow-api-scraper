@@ -33,15 +33,14 @@
                             {
                                 "label": "Photo",
                                 "format": "image",
-                                "field": "photos[0]",
-                                "imageUrlField": "$photos[0]"
+                                "field": "photos[0]"
                             },
                             {
-                              "label": "Home status",
-                              "format": "text",
-                              "field": "homeStatus"
-                          },
-                          {
+                                "label": "Home status",
+                                "format": "text",
+                                "field": "homeStatus"
+                            },
+                            {
                                 "label": "Price",
                                 "format": "number",
                                 "field": "price"
