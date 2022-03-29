@@ -33,6 +33,7 @@
                             {
                                 "label": "Photo",
                                 "format": "image",
+                                "field": "photos[0]",
                                 "imageUrlField": "$photos[0]"
                             },
                             {
@@ -85,7 +86,7 @@
                                 "format": "number",
                                 "field": "lotSize"
                             },
-                            { "label": "URL", "format": "link", "field": "urL" }
+                            { "label": "URL", "format": "link", "field": "url" }
                         ]
                     }
                 }
