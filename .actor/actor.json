@@ -17,10 +17,7 @@
                         "fields": [
                             "homeStatus",
                             "price",
-                            "address.streetAddress",
-                            "address.city",
-                            "address.state",
-                            "address.zipcode",
+                            "address",
                             "yearBuilt",
                             "bedrooms",
                             "bathrooms",
