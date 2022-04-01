@@ -257,7 +257,7 @@ class PageHandler {
                 label: LABELS.ENRICHED_ZPIDS,
                 zpids,
             },
-        });
+        }, { forefront: true });
     }
 
     /**
