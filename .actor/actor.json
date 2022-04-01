@@ -1,0 +1,95 @@
+{
+    "actorSpecification": 1,
+    "name": "zillow-scraper",
+    "title": "Zillow Scraper",
+    "description": "Scrapes places from Zillow...",
+    "version": "0.0.1",
+    "storages": {
+        "dataset": {
+            "actorSpecification": 1,
+            "title": "Output",
+            "description": "Too see all scraped properties, export the whole dataset or select All fields instead of Overview",
+            "views": {
+                "overview": {
+                    "title": "Overview",
+                    "description": "Selected fields from the dataset",
+                    "transformation": {
+                        "fields": [
+                            "photos",
+                            "homeStatus",
+                            "price",
+                            "address",
+                            "yearBuilt",
+                            "bedrooms",
+                            "bathrooms",
+                            "livingArea",
+                            "lotSize",
+                            "url"
+                        ]
+                    },
+                    "display": {
+                        "component": "table",
+                        "columns": [
+                            {
+                                "label": "Photo",
+                                "format": "image",
+                                "field": "photos[0]"
+                            },
+                            {
+                                "label": "Home status",
+                                "format": "text",
+                                "field": "homeStatus"
+                            },
+                            {
+                                "label": "Price",
+                                "format": "number",
+                                "field": "price"
+                            },
+                            {
+                                "label": "Street address",
+                                "format": "text",
+                                "field": "address.streetAddress"
+                            },
+                            {
+                                "label": "City",
+                                "format": "text",
+                                "field": "address.city"
+                            },
+                            {
+                                "label": "State",
+                                "format": "text",
+                                "field": "address.state"
+                            },
+                            {
+                                "label": "Zipcode",
+                                "format": "text",
+                                "field": "address.zipcode"
+                            },
+                            {
+                                "label": "Bedrooms",
+                                "format": "number",
+                                "field": "bedrooms"
+                            },
+                            {
+                                "label": "Bathrooms",
+                                "format": "number",
+                                "field": "bathrooms"
+                            },
+                            {
+                                "label": "Living area",
+                                "format": "number",
+                                "field": "livingArea"
+                            },
+                            {
+                                "label": "Lot size",
+                                "format": "number",
+                                "field": "lotSize"
+                            },
+                            { "label": "URL", "format": "link", "field": "url" }
+                        ]
+                    }
+                }
+            }
+        }
+    }
+}
