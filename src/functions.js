@@ -7,7 +7,7 @@ const { bboxPolygon, bbox, area, squareGrid } = require('@turf/turf');
 const { gotScraping } = require('got-scraping');
 const { LABELS, TYPES, ORIGIN, GetSearchPageState, SearchQueryState } = require('./constants'); // eslint-disable-line no-unused-vars
 
-const { log, sleep } = Apify.utils;
+const { log } = Apify.utils;
 
 const mappings = {
     att: 'keywords',
@@ -350,9 +350,12 @@ const getQueryFilterStates = (filterState, type) => {
     const typeFilters = {
         sale: [{
             ...needed,
+            isForRent: { value: false },
+            isRecentlySold: { value: false },
         }],
         fsbo: [{
             ...needed,
+            isForSaleByAgent: { value: false },
             isForSaleByOwner: { value: true },
         }],
         rent: [{
@@ -362,8 +365,9 @@ const getQueryFilterStates = (filterState, type) => {
         }],
         sold: [{
             ...needed,
-            isRecentlySold: { value: true },
             ...rentSoldCommonFilters,
+            isForRent: { value: false },
+            isRecentlySold: { value: true },
         }],
         /** @type {Array<any>} */
         all: [],
@@ -422,25 +426,23 @@ const queryRegionHomes = async (params) => {
 
 /**
  *
- * @param {boolean} ignoreFilter
  * @param {keyof TYPES} inputType
  * @param {Puppeteer.Page} page
  * @param {SearchQueryState} pageQueryState
- * @param {number} paginationPage
  * @param {(param: { cat: 'cat1' | 'cat2', qs: SearchQueryState, url: string, hash: string, result: GetSearchPageState }) => Promise<void>} cb
+ * @param {number} [paginationPage]
  */
-const extractQueryStates = async (ignoreFilter, inputType, page, pageQueryState, cb, paginationPage = 1) => {
+const extractQueryStates = async (inputType, page, pageQueryState, cb, paginationPage = 1) => {
     const queryStates = new Set();
+    const isDebug = log.getLevel() === log.LEVELS.DEBUG;
 
-    const type = ignoreFilter ? 'qs' : inputType;
+    const filterStates = getQueryFilterStates(translateQsToFilter(pageQueryState.filterState), inputType);
 
-    const filterStates = getQueryFilterStates(translateQsToFilter(pageQueryState.filterState), type);
+    log.debug(`Filter states`, { inputType, count: filterStates.length });
 
     /** @type {Array<['cat1' | 'cat2', any]>} */
     const configs = [
         ['cat1', { cat1: ['listResults', 'mapResults'], cat2: ['total'] }],
-        ['cat1', { cat1: ['listResults', 'mapResults'] }],
-
         ['cat2', { cat2: ['listResults', 'mapResults'] }],
     ];
 
@@ -462,7 +464,11 @@ const extractQueryStates = async (ignoreFilter, inputType, page, pageQueryState,
 
             if (response.error) {
                 log.debug(`Request failed`, { pageQueryState, response });
-                await Apify.setValue(getUniqueKeyFromQueryState(response.qs), response);
+
+                if (isDebug) {
+                    await Apify.setValue(getUniqueKeyFromQueryState(response.qs), response);
+                }
+
                 continue;
             }
 
@@ -488,7 +494,7 @@ const extractQueryStates = async (ignoreFilter, inputType, page, pageQueryState,
                 });
             }
 
-            if (log.getLevel() === log.LEVELS.DEBUG) {
+            if (isDebug) {
                 await Apify.setValue(`SEARCH_STATE-${hash}`, result);
             }
         }
@@ -570,30 +576,42 @@ const createGetSimpleResult = (attributes) => (/** @type {any} */ data) => {
     }
 
     Object.keys(attributes).forEach((key) => {
-        if (key in data) { result[key] = data[key]; }
+        // allow 0 and null values to be output. undefined will be omitted anyway
+        if (key in data) {
+            result[key] = data[key];
+        }
     });
 
     if (result.hdpUrl) {
-        result.url = `https://www.zillow.com${result.hdpUrl}`;
+        result.url = (new URL(result.hdpUrl, ORIGIN)).toString();
         delete result.hdpUrl;
     }
+
     if (result.responsivePhotos) {
         result.photos = result.responsivePhotos.map((/** @type {{ url: String }} */ hp) => hp.url);
         delete result.responsivePhotos;
     }
+
     return result;
 };
 
 /**
+ * JSON.stringify the input and sha256 it
+ *
  * @param {Array<any> | Record<string, any>} data
  */
-const quickHash = (data) => createHash('sha256').update(JSON.stringify(data)).digest('hex').slice(0, 12);
+const quickHash = (data) => createHash('sha256')
+    .update(JSON.stringify(data))
+    .digest('hex')
+    .slice(0, 14);
 
 /**
+ * Apply a label to the given URL for userData. Throws if couldn't be categorized
+ *
  * @param {string} url
  */
 const getUrlData = (url) => {
-    const nUrl = new URL(url, 'https://www.zillow.com');
+    const nUrl = new URL(url, ORIGIN);
 
     if (/\/\d+_zpid/.test(nUrl.pathname) || nUrl.pathname.startsWith('/b/')) {
         const zpid = nUrl.pathname.match(/\/(\d+)_zpid/);
@@ -636,15 +654,16 @@ const getUrlData = (url) => {
  */
 const getUniqueKeyFromQueryState = (queryState, nonce = []) => {
     return quickHash([
-        queryState.mapZoom,
+        queryState.mapZoom || 10, // when no zoom is present, it's 10. needs to be enforced here so we don't get duplicates
         [
-            queryState.mapBounds.west,
-            queryState.mapBounds.east,
-            queryState.mapBounds.north,
-            queryState.mapBounds.south,
+            queryState.mapBounds?.west,
+            queryState.mapBounds?.east,
+            queryState.mapBounds?.north,
+            queryState.mapBounds?.south,
         ],
         queryState.pagination?.currentPage || 1,
-        Object.keys(queryState.filterState ?? {}).sort(),
+        // sort the keys so they are always the same
+        Object.entries(queryState.filterState ?? {}).sort(([key1], [key2]) => `${key1}`.localeCompare(`${key2}`)),
         nonce,
     ]);
 };
@@ -759,25 +778,43 @@ const extendFunction = async ({
 };
 
 /**
+ * Allows relative dates like `1 month` or `12 minutes`,
+ * yesterday and today.
+ * Parses unix timestamps in milliseconds and absolute dates in ISO format
+ *
  * @param {string} value
- * @returns
+ * @param {boolean} inTheFuture
  */
-const parseTimeUnit = (value) => {
+const parseTimeUnit = (value, inTheFuture) => {
     if (!value) {
         return null;
     }
 
-    if (value === 'today' || value === 'yesterday') {
-        return (value === 'today' ? moment() : moment().subtract(1, 'day')).startOf('day');
+    switch (value) {
+        case 'today':
+        case 'yesterday': {
+            const startDate = (value === 'today' ? moment.utc() : moment.utc().subtract(1, 'day'));
+
+            return inTheFuture
+                ? startDate.endOf('day')
+                : startDate.startOf('day');
+        }
+        default: {
+            const [, number, unit] = `${value}`.match(/^(\d+)\s?(minute|second|day|hour|month|year|week)s?$/i) || [];
+
+            if (+number && unit) {
+                return moment.utc().subtract(+number, unit);
+            }
+
+            // valid integer, needs to be typecast into a number
+            // non-milliseconds needs to be converted to milliseconds
+            if (+value == value) {
+                return moment.utc(+value % 1000 === 0 ? +value : +value * 1000);
+            }
+        }
     }
 
-    const [, number, unit] = `${value}`.match(/^(\d+)\s?(minute|second|day|hour|month|year|week)s?$/i) || [];
-
-    if (+number && unit) {
-        return moment().subtract(+number, unit);
-    }
-
-    return moment(value);
+    return moment.utc(value);
 };
 
 /**
@@ -795,14 +832,17 @@ const parseTimeUnit = (value) => {
  * @param {MinMax} param
  */
 const minMaxDates = ({ min, max }) => {
-    const minDate = parseTimeUnit(min);
-    const maxDate = parseTimeUnit(max);
+    const minDate = parseTimeUnit(min, false);
+    const maxDate = parseTimeUnit(max, true);
 
     if (minDate && maxDate && maxDate.diff(minDate) < 0) {
         throw new Error(`Minimum date ${minDate.toString()} needs to be less than max date ${maxDate.toString()}`);
     }
 
     return {
+        get isComparable() {
+            return !!minDate || !!maxDate;
+        },
         /**
          * cloned min date, if set
          */
@@ -816,11 +856,13 @@ const minMaxDates = ({ min, max }) => {
             return maxDate?.clone();
         },
         /**
-         * compare the given date/timestamp to the time interval
+         * compare the given date/timestamp to the time interval.
+         * never fails or throws.
+         *
          * @param {string | number} time
          */
         compare(time) {
-            const base = moment(time);
+            const base = parseTimeUnit(time, false);
             return (minDate ? minDate.diff(base) <= 0 : true) && (maxDate ? maxDate.diff(base) >= 0 : true);
         },
     };

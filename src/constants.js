@@ -95,6 +95,10 @@ const ORIGIN = 'https://www.zillow.com/';
  *       mapResults: ZpidResult[]
  *       listResults: ZpidResult[]
  *       relaxedResults: ZpidResult[]
+ *     },
+ *     searchList: {
+ *       listResultsTitle: string,
+ *       zeroResultsFilters?: Record<string, number>
  *     }
  * }} GetSearchPageStateResults
  *

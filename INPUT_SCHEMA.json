@@ -1,136 +1,166 @@
 {
-  "title": "Zillow.com scraper input schema",
-  "type": "object",
-  "schemaVersion": 1,
-  "properties": {
-      "search": {
-          "title": "Search",
-          "type": "string",
-          "editor": "textfield",
-          "prefill": "Los Angeles",
-          "description": "Query to search on Zillow.com"
-      },
-      "type": {
-          "title": "Type",
-          "type": "string",
-          "description": "Property for sale/rent",
-          "default": "all",
-          "prefill": "all",
-          "enum": ["all", "sale", "fsbo", "rent", "sold"],
-          "enumTitles": ["All", "For sale", "For sale by owner", "For rent", "Sold"]
-      },
-      "maxItems": {
-          "title": "Max items",
-          "type": "integer",
-          "minimum": 0,
-          "prefill": 200,
-          "description": "Limit of home detail pages to be scraped"
-      },
-      "simple": {
-          "title": "Simple results",
-          "type": "boolean",
-          "description": "Return only a subset of possible result attributes.",
-          "default": true
-      },
-      "startUrls": {
-          "title": "Start URLs",
-          "type": "array",
-          "editor": "requestListSources",
-          "description": "List of URLs that will be crawled.",
-          "sectionCaption": "Start with URL or ZPID",
-          "sectionDescription": "You can use a direct URL or ZPID instead of simple search."
-      },
-      "zpids": {
-          "title": "Zillow home IDs",
-          "type": "array",
-          "editor": "json",
-          "description": "List of ZPIDs that will be scraped."
-      },
-      "zipcodes": {
-          "title": "US Zipcodes",
-          "type": "array",
-          "editor": "json",
-          "description": "List of zipcodes that will be scraped. Notice that this can take a lot of time to complete!"
-      },
-      "maxLevel": {
-          "title": "Max zoom level",
-          "type": "integer",
-          "minimum": 0,
-          "prefill": 5,
-          "default": 0,
-          "description": "Maximum map splitting level. The bigger number is set, the longer the scrape will take",
-          "sectionCaption": "Other filters (zoom level, dates)"
-      },
-      "minDate": {
-          "title": "Minimum date",
-          "type": "string",
-          "editor": "textfield",
-          "pattern": "(\\d{4}-\\d{2}-\\d{2}|(\\d+)\\s?\\S+)",
-          "description": "Oldest date allowed in results. Can use specific dates, such as YYYY-MM-DD or relative ones, like '1 month' or '2 days'"
-      },
-      "maxDate": {
-          "title": "Maximum date",
-          "type": "string",
-          "editor": "textfield",
-          "pattern": "(\\d{4}-\\d{2}-\\d{2}|(\\d+)\\s?\\S+)",
-          "description": "Newest date allowed in results. Can use specific dates, such as YYYY-MM-DD or relative ones, like '1 month' or '2 days'"
-      },
-      "proxyConfiguration": {
-          "title": "Proxy configuration",
-          "type": "object",
-          "editor": "proxy",
-          "description": "The best option is usually Automatic proxy. But you can also use your own proxies or no proxy",
-          "default": { "useApifyProxy": true },
-          "prefill": { "useApifyProxy": true },
-          "sectionCaption": "Proxy and browser configuration"
-      },
-      "maxRetries": {
-          "title": "Max retries",
-          "description": "How many retries until the scraper should give up",
-          "type": "integer",
-          "editor": "number",
-          "prefill": 6,
-          "default": 6
-      },
-      "handlePageTimeoutSecs": {
-          "title": "Timeout seconds",
-          "description": "Configure the handlePageTimeoutSecs setting",
-          "default": 3600,
-          "prefill": 3600,
-          "type": "integer",
-          "editor": "number"
-      },
-      "debugLog": {
-          "title": "Debug log",
-          "description": "Enable debug log",
-          "default": false,
-          "type": "boolean",
-          "editor": "checkbox"
-      },
-      "extendOutputFunction": {
-          "title": "Extend output function",
-          "type": "string",
-          "editor": "javascript",
-          "description": "Extend the output item to contain more fields. The raw data is present in the 'data' variable.",
-          "prefill": "async ({ data, item, customData, Apify }) => {\n    return item;\n}",
-          "sectionCaption": "Extend scraper functionality",
-          "sectionDescription": "You can change the output of the items for your dataset here, or add additional behavior on the scraper."
-      },
-      "extendScraperFunction": {
-          "title": "Extend Scraper Function",
-          "description": "Advanced function that allows you to extend the default scraper functionality, allowing you to manually perform actions on the page",
-          "type": "string",
-          "default": "",
-          "prefill": "async ({ label, page, request, customData, Apify }) => {\n    if (label === 'SETUP') {\n        // before crawler.run()\n    } else if (label === 'GOTO') {\n        // inside handleGotoFunction\n    } else if (label === 'HANDLE') {\n        // inside handlePageFunction\n    } else if (label === 'FINISH') {\n        // after crawler.run()\n    }\n}",
-          "editor": "javascript"
-      },
-      "customData": {
-          "title": "Custom data",
-          "description": "Any data that you want to have available inside the Extend Output/Scraper Function",
-          "default": {},
-          "prefill": {},
-          "type": "object",
-          "editor": "json"
-      }
-  }
+    "title": "Zillow.com scraper input schema",
+    "type": "object",
+    "schemaVersion": 1,
+    "properties": {
+        "search": {
+            "title": "Search",
+            "type": "string",
+            "editor": "textarea",
+            "prefill": "Los Angeles",
+            "description": "Query to search on Zillow.com"
+        },
+        "type": {
+            "title": "Type",
+            "type": "string",
+            "description": "Property for sale/rent",
+            "default": "all",
+            "prefill": "all",
+            "enum": [
+                "all",
+                "sale",
+                "fsbo",
+                "rent",
+                "sold"
+            ],
+            "enumTitles": [
+                "All",
+                "For sale",
+                "For sale by owner",
+                "For rent",
+                "Sold"
+            ]
+        },
+        "maxItems": {
+            "title": "Max items",
+            "type": "integer",
+            "minimum": 0,
+            "prefill": 200,
+            "description": "Limit of home detail pages to be scraped"
+        },
+        "simple": {
+            "title": "Simple results",
+            "type": "boolean",
+            "description": "Return only a subset of possible result attributes.",
+            "default": true
+        },
+        "startUrls": {
+            "title": "Start URLs",
+            "type": "array",
+            "editor": "requestListSources",
+            "description": "List of URLs that will be crawled.",
+            "sectionCaption": "Start with URL or ZPID",
+            "sectionDescription": "You can use a direct URL or ZPID instead of simple search."
+        },
+        "zpids": {
+            "title": "Zillow home IDs",
+            "type": "array",
+            "editor": "json",
+            "description": "List of ZPIDs that will be scraped."
+        },
+        "zipcodes": {
+            "title": "US Zipcodes",
+            "type": "array",
+            "editor": "json",
+            "description": "List of zipcodes that will be scraped. Notice that this can take a lot of time to complete!"
+        },
+        "maxLevel": {
+            "title": "Max zoom level",
+            "type": "integer",
+            "minimum": 0,
+            "prefill": 5,
+            "default": 0,
+            "description": "Maximum map splitting level. The bigger number is set, the longer the scrape will take",
+            "sectionCaption": "Other filters (zoom level, dates)"
+        },
+        "minDate": {
+            "title": "Minimum date",
+            "type": "string",
+            "editor": "textfield",
+            "pattern": "^(\\d{4}-\\d{2}-\\d{2}|(\\d+)\\s?(month|week|day|year|hour|minute)s?|(to|yester)day)$",
+            "description": "Oldest date allowed in results. Can use literal dates, such as YYYY-MM-DD or relative ones, like 3 hours, 1 month, 2 days, today or yesterday"
+        },
+        "maxDate": {
+            "title": "Maximum date",
+            "type": "string",
+            "editor": "textfield",
+            "pattern": "^(\\d{4}-\\d{2}-\\d{2}|(\\d+)\\s?(month|week|day|year|hour|minute)s?|(to|yester)day)$",
+            "description": "Newest date allowed in results. Can use literal dates, such as YYYY-MM-DD or relative ones, like 3 hours, 1 month, 2 days, today or yesterday"
+        },
+        "includeRelaxedResults": {
+            "title": "Include more results",
+            "description": "Setting this option might give results close but outside to the original city / county / state.",
+            "default": true,
+            "type": "boolean",
+            "editor": "checkbox"
+        },
+        "proxyConfiguration": {
+            "title": "Proxy configuration",
+            "type": "object",
+            "editor": "proxy",
+            "description": "The best option is usually Automatic proxy. But you can also use your own proxies or no proxy",
+            "default": {
+                "useApifyProxy": true
+            },
+            "prefill": {
+                "useApifyProxy": true
+            },
+            "sectionCaption": "Proxy and browser configuration"
+        },
+        "maxRetries": {
+            "title": "Max retries",
+            "description": "How many retries until the scraper should give up",
+            "type": "integer",
+            "editor": "number",
+            "prefill": 6,
+            "default": 6
+        },
+        "handlePageTimeoutSecs": {
+            "title": "Timeout seconds",
+            "description": "Configure the handlePageTimeoutSecs setting",
+            "default": 3600,
+            "prefill": 3600,
+            "type": "integer",
+            "editor": "number"
+        },
+        "debugLog": {
+            "title": "Debug log",
+            "description": "Enable debug log",
+            "default": false,
+            "type": "boolean",
+            "editor": "checkbox"
+        },
+        "extendOutputFunction": {
+            "title": "Extend output function",
+            "type": "string",
+            "editor": "javascript",
+            "description": "Extend the output item to contain more fields. The raw data is present in the 'data' variable.",
+            "prefill": "async ({ data, item, customData, Apify }) => {\n    return item;\n}",
+            "sectionCaption": "Extend scraper functionality",
+            "sectionDescription": "You can change the output of the items for your dataset here, or add additional behavior on the scraper."
+        },
+        "extendScraperFunction": {
+            "title": "Extend Scraper Function",
+            "description": "Advanced function that allows you to extend the default scraper functionality, allowing you to manually perform actions on the page",
+            "type": "string",
+            "default": "",
+            "prefill": "async ({ label, page, request, customData, Apify }) => {\n    if (label === 'SETUP') {\n        // before crawler.run()\n    } else if (label === 'GOTO') {\n        // inside handleGotoFunction\n    } else if (label === 'HANDLE') {\n        // inside handlePageFunction\n    } else if (label === 'FINISH') {\n        // after crawler.run()\n    }\n}",
+            "editor": "javascript"
+        },
+        "customData": {
+            "title": "Custom data",
+            "description": "Any data that you want to have available inside the Extend Output/Scraper Function",
+            "default": {},
+            "prefill": {},
+            "type": "object",
+            "editor": "json"
+        },
+        "rawOutput": {
+            "title": "Raw output",
+            "description": "Output the results without any filtering or formatting. It's recommended to leave this option unchecked.",
+            "default": false,
+            "type": "boolean",
+            "editor": "checkbox"
+        }
+    }
 }

@@ -44,6 +44,7 @@ class PageHandler {
      *      startUrls: Apify.RequestOptions[],
      *      type: keyof TYPES,
      *      handlePageTimeoutSecs: number,
+     *      includeRelaxedResults: boolean,
      *      zpids: any[],
      *  },
      *  crawler: Apify.PuppeteerCrawler,
@@ -75,11 +76,11 @@ class PageHandler {
                 return req.url().includes('/search/GetSearchPageState.htm');
             }, { timeout: 45000 });
 
-            const url = new URL(response.request().url()).searchParams.get('searchQueryState');
+            const searchQueryState = new URL(response.request().url()).searchParams.get('searchQueryState');
 
             return {
                 result: await response.json(),
-                searchQueryState: JSON.parse(url ?? '{}'),
+                searchQueryState: JSON.parse(searchQueryState ?? '{}'),
             };
         } catch (e) {
             log.debug('getResponse', { e: e.message });
@@ -162,7 +163,7 @@ class PageHandler {
                         zpid: +zpid,
                     },
                     uniqueKey: zpid || zpidUrl,
-                }, { forefront: true });
+                });
 
                 if (!rq.wasAlreadyPresent) {
                     log.info(`Re-enqueueing ${zpidUrl}`);
@@ -184,7 +185,6 @@ class PageHandler {
             throw new Error('Failed to load preloaded data scripts');
         }
 
-        log.info(`Extracting data from ${url}`);
         let noScriptsFound = true;
 
         for (const script of scripts) {
@@ -193,6 +193,8 @@ class PageHandler {
 
                 for (const key in loaded) { // eslint-disable-line
                     if (key.includes('FullRenderQuery') && loaded[key].property) {
+                        log.info(`Extracting data from ${url}`);
+
                         await this.extendOutputFunction(loaded[key].property, {
                             request,
                             page,
@@ -244,6 +246,10 @@ class PageHandler {
             return;
         }
 
+        if (!zpids.length) {
+            return;
+        }
+
         return requestQueue?.addRequest({
             url,
             uniqueKey: fns.quickHash(['ZPIDS', hash]),
@@ -283,6 +289,7 @@ class PageHandler {
             if (!containsResults) {
                 // this silently finishes when there's really no results
                 // when it's an error, this check won't be reached
+                log.debug(`!containsResults`, merged);
                 return;
             }
 
@@ -296,16 +303,14 @@ class PageHandler {
                 fns.getUniqueKeyFromQueryState(queryState),
             );
 
-            log.info(`Got ${
-                merged.results.length}/${merged.categoryTotals
-            } (this number is an approximation) from ${
-                page.url().split('?')[0]
-            }`);
+            log.info(`[${merged.title}]: ${merged.results.length}/${merged.categoryTotals} (this number is an approximation)`);
 
-            await Promise.allSettled([
-                this._tryEnqueueMapSplits(queryState),
-                this._tryEnqueuePaginationPages(queryState),
-            ]);
+            if (!merged.zeroResultsFilter) {
+                await Promise.allSettled([
+                    this._tryEnqueueMapSplits(queryState),
+                    this._tryEnqueuePaginationPages(queryState),
+                ]);
+            }
 
             await this._extractQueryStatesForCurrentPage(queryState);
         } catch (/** @type {any} */ e) {
@@ -340,13 +345,13 @@ class PageHandler {
         }
 
         const enqueueZpid = () => requestQueue.addRequest({
-            url: new URL(detailUrl || `/homedetails/${zpid}_zpid/`, 'https://www.zillow.com').toString(),
+            url: new URL(detailUrl || `/homedetails/${zpid}_zpid/`, ORIGIN).toString(),
             userData: {
                 label: LABELS.DETAIL,
                 zpid: +zpid,
             },
             uniqueKey: zpid || detailUrl,
-        }, { forefront: true });
+        });
 
         if (relaxed) {
             log.debug('Enqueuing relaxed zpid', { zpid });
@@ -368,7 +373,7 @@ class PageHandler {
 
             if (zpids.has(`${zpid}`)) {
                 noWait = true;
-                log.debug(`Zpids already contain zpid ${zpid}, returning from process zpid`);
+                log.debug(`Zpids already contain zpid ${zpid}, going for next parse`);
                 return;
             }
 
@@ -508,7 +513,7 @@ class PageHandler {
      * @returns array of list results and map results for cat1 and cat2 merged
      */
     _getMergedSearchResults(pageQs) {
-        const { zpids } = this.globalContext;
+        const { zpids, input: { includeRelaxedResults = true } } = this.globalContext;
         const set = new Set();
         /** @type {Array<ZpidResult>} */
         const results = [];
@@ -517,11 +522,14 @@ class PageHandler {
             [
                 ...qs?.cat1?.searchResults?.listResults ?? [],
                 ...qs?.cat1?.searchResults?.mapResults ?? [],
-                ...qs?.cat1?.searchResults?.relaxedResults ?? [],
                 ...qs?.cat2?.searchResults?.listResults ?? [],
                 ...qs?.cat2?.searchResults?.mapResults ?? [],
-                ...qs?.cat2?.searchResults?.relaxedResults ?? [],
-            ]
+            ].concat(
+                includeRelaxedResults ? [
+                    ...(qs?.cat1?.searchResults?.relaxedResults ?? []),
+                    ...(qs?.cat2?.searchResults?.relaxedResults ?? []),
+                ] : [],
+            )
                 .map(({ zpid, detailUrl, relaxed }) => ({
                     zpid: `${zpid}`,
                     detailUrl: detailUrl || '',
@@ -530,11 +538,10 @@ class PageHandler {
                 .filter((s) => {
                     return !!s.zpid
                         && +s.zpid == s.zpid
-                        && !zpids.has(s.zpid)
-                        && !set.has(s.zpid);
+                        && !zpids.has(`${s.zpid}`);
                 })
                 .forEach((item) => {
-                    set.add(item.zpid);
+                    set.add(`${item.zpid}`);
                     out.results.push(item);
                 });
 
@@ -544,10 +551,21 @@ class PageHandler {
                 qs?.categoryTotals?.cat2?.totalResultCount ?? 0,
             );
 
+            out.title = qs?.cat1?.searchList?.listResultsTitle
+                || qs?.cat2?.searchList?.listResultsTitle
+                || out.title;
+
+            out.zeroResultsFilter = Math.max(
+                Object.keys(qs?.cat1?.searchList?.zeroResultsFilters ?? {}).length,
+                Object.keys(qs?.cat2?.searchList?.zeroResultsFilters ?? {}).length,
+            ) > 0;
+
             return out;
         }, {
             results,
             categoryTotals: -Infinity,
+            title: '',
+            zeroResultsFilter: false,
         });
     }
 
@@ -561,13 +579,12 @@ class PageHandler {
     async _extractQueryStatesForCurrentPage(pageQs) {
         const { request, page } = this.context;
         const { input } = this.globalContext;
+        const { pageNumber = 1, ignoreFilter } = request.userData;
 
-        /** @type {number} */
-        const pageNumber = request.userData.pageNumber || 1;
+        const inputType = ignoreFilter ? 'qs' : input.type;
 
         return extractQueryStates(
-            request.userData.ignoreFilter,
-            input.type,
+            inputType,
             page,
             pageQs,
             async ({ url, result, hash }) => {
@@ -641,8 +658,9 @@ class PageHandler {
      */
     async _tryEnqueuePaginationPages(searchQueryState) {
         const { requestQueue, page, request } = this.context;
+        const { ignoreFilter, pageNumber } = request.userData;
 
-        if (this.isOverItems() || !!request.userData.pageNumber) {
+        if (this.isOverItems() || +pageNumber) {
             return;
         }
 
@@ -668,6 +686,7 @@ class PageHandler {
                 url: url.toString(),
                 userData: {
                     label: LABELS.QUERY,
+                    ignoreFilter,
                     pageNumber: i,
                 },
                 uniqueKey,
@@ -681,24 +700,28 @@ class PageHandler {
      * @param {number} splitCount
      */
     async _enqueueMapSplits(splits, splitCount) {
-        const { requestQueue, page } = this.context;
+        const { requestQueue, page, request } = this.context;
+        const { ignoreFilter } = request.userData;
 
         for (const searchQueryState of splits) {
             if (this.isOverItems()) {
                 break;
             }
 
-            const uniqueKey = fns.getUniqueKeyFromQueryState(searchQueryState);
-
-            log.debug('queryState', { searchQueryState, uniqueKey });
             const url = new URL(page.url());
+
+            /** @type {SearchQueryState} */
+            const queryState = {
+                ...searchQueryState,
+                pagination: {},
+            };
+
+            const uniqueKey = fns.getUniqueKeyFromQueryState(queryState);
+            log.debug('queryState', { searchQueryState, uniqueKey });
 
             url.pathname = url.pathname === '/' ? '/homes/' : url.pathname;
 
-            url.searchParams.set('searchQueryState', JSON.stringify({
-                ...searchQueryState,
-                pagination: {},
-            }));
+            url.searchParams.set('searchQueryState', JSON.stringify(queryState));
 
             const result = await requestQueue.addRequest({
                 url: url.toString(),
@@ -706,6 +729,7 @@ class PageHandler {
                     searchQueryState,
                     label: LABELS.QUERY,
                     splitCount,
+                    ignoreFilter,
                 },
                 uniqueKey,
             });

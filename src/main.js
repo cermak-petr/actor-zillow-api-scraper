@@ -44,7 +44,10 @@ Apify.main(async () => {
         proxyConfig.countryCode = 'US';
     }
 
-    const minMaxDate = minMaxDates(input);
+    const minMaxDate = minMaxDates({
+        max: input.maxDate,
+        min: input.minDate,
+    });
 
     const getSimpleResult = getSimpleResultFunction(input);
 
@@ -161,10 +164,10 @@ Apify.main(async () => {
         maxOpenPagesPerBrowser: 1,
         retireBrowserAfterPageCount: 1,
         prePageCloseHooks: [async (page, browserController) => {
-            const { request } = crawler.crawlingContexts.get(browserController.launchContext.id);
+            const context = crawler.crawlingContexts.get(browserController.launchContext.id);
 
-            if (request?.errorMessages?.some((error) => error.includes('ERR_TOO_MANY_REDIRECTS'))) {
-                request.noRetry = true;
+            if (context?.request?.errorMessages?.some((error) => error.includes('ERR_TOO_MANY_REDIRECTS'))) {
+                context.request.noRetry = true;
             }
         }],
     };

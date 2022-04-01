@@ -39,12 +39,16 @@ const cleanUpUrl = (url) => {
 
     // pagination on the JSON variable
     if (nUrl.searchParams.has('searchQueryState')) {
-        searchQueryState = JSON.parse(nUrl.searchParams.get('searchQueryState'));
+        try {
+            searchQueryState = JSON.parse(nUrl.searchParams.get('searchQueryState'));
 
-        nUrl.searchParams.set('searchQueryState', JSON.stringify({
-            ...searchQueryState,
-            pagination: {},
-        }));
+            nUrl.searchParams.set('searchQueryState', JSON.stringify({
+                ...searchQueryState,
+                pagination: {}, // erase the pagination
+            }));
+        } catch (e) {
+            throw new Error(`The URL ${url} don't have a valid searchQueryState parameter:\n${e.message}`);
+        }
     }
 
     return {
@@ -62,22 +66,38 @@ const cleanUpUrl = (url) => {
  */
 const getInitializedStartUrls = (input, rq) => async () => {
     if (input.search?.trim()) {
-        const term = input.search.trim();
+        const terms = new Set(
+            input.search
+                .split(/(\n|\r\n)/m)
+                .map((s) => s.trim())
+                .filter(Boolean),
+        );
 
-        await rq.addRequest({
-            url: 'https://www.zillow.com',
-            uniqueKey: `${term}`,
-            userData: {
-                label: LABELS.SEARCH,
-                term,
-            },
-        });
+        if (!terms.size) {
+            throw new Error('You need to provide a region for search, one per line');
+        }
+
+        for (const term of terms) {
+            const result = await rq.addRequest({
+                url: 'https://www.zillow.com',
+                uniqueKey: `${term}`,
+                userData: {
+                    label: LABELS.SEARCH,
+                    term,
+                },
+            });
+
+            if (!result.wasAlreadyPresent) {
+                log.info(`Added search ${term}`);
+            }
+        }
     }
 
     if (input.startUrls?.length) {
         if (input.type) {
             log.warning(`Input type "${input.type}" will be ignored as the value is derived from start url.
-             Check if your start urls match the desired home status.`);
+
+Check if your start urls match the desired home status.`);
         }
 
         const requestList = await Apify.openRequestList('STARTURLS', input.startUrls);
@@ -117,9 +137,9 @@ const getInitializedStartUrls = (input, rq) => async () => {
             uniqueKey: 'ZPIDS',
             userData: {
                 label: LABELS.ZPIDS,
-                zpids: [].concat(input.zpids).filter((value) => /^\d+$/.test(value)),
+                zpids: Array.from(input.zpids.filter((value) => /^\d+$/.test(value))),
             },
-        });
+        }, { forefront: true });
     }
 
     if (input.zipcodes?.length) {
@@ -172,20 +192,25 @@ const initializePreLaunchHooks = (input) => {
 /**
  *
  * @param {{
- *  zpids: Set<any>,
+ *  zpids: Set<string>,
  *  input: {
- *      maxItems: Number,
- *      startUrls: Array<Apify.RequestOptions>,
- *      type: String
+ *      rawOutput: boolean,
+ *      maxItems: number,
+ *      type: string
  *  },
  * }} globalContext
  * @param {*} minMaxDate
  * @param {ReturnType<createGetSimpleResult>} getSimpleResult
- * @returns
  */
 const getExtendOutputFunction = async ({ zpids, input }, minMaxDate, getSimpleResult) => {
     const extendOutputFunction = await extendFunction({
-        map: async (data) => getSimpleResult(data),
+        map: async (data) => {
+            if (input.rawOutput === true) {
+                return data;
+            }
+
+            return getSimpleResult(data);
+        },
         filter: async ({ data }, { request }) => {
             if (isOverItems({ zpids, input })) {
                 return false;
@@ -195,13 +220,14 @@ const getExtendOutputFunction = async ({ zpids, input }, minMaxDate, getSimpleRe
                 return false;
             }
 
-            if (!minMaxDate.compare(data.datePosted) || zpids.has(`${data.zpid}`)) {
+            if (zpids.has(`${data.zpid}`)) {
                 return false;
             }
 
-            if (request.userData.ignoreFilter === true) {
-                // ignore input.type when it is set in start url
-                return true;
+            if (minMaxDate.isComparable && data.datePostedString) {
+                if (!minMaxDate.compare(data.datePostedString)) {
+                    return false;
+                }
             }
 
             switch (input.type) {
@@ -212,7 +238,7 @@ const getExtendOutputFunction = async ({ zpids, input }, minMaxDate, getSimpleRe
                 case 'rent':
                     return data.homeStatus === 'FOR_RENT';
                 case 'sold':
-                    return data.homeStatus?.includes('SOLD');
+                    return data.homeStatus?.includes('SOLD') === true;
                 case 'all':
                 default:
                     return true;
@@ -249,19 +275,26 @@ const getSimpleResultFunction = (input) => {
     // Toggle showing only a subset of result attributes
 
     const simpleResult = {
+        zpid: true,
         address: true,
         bedrooms: true,
         bathrooms: true,
         price: true,
         yearBuilt: true,
         longitude: true,
-        homeStatus: true,
         latitude: true,
+        homeStatus: true,
         description: true,
         livingArea: true,
         currency: true,
         hdpUrl: true,
+        homeType: true,
+        dateSold: true,
+        dateSoldString: true,
+        datePostedString: true,
+        datePosted: true,
         responsivePhotos: true,
+        daysOnZillow: true,
     };
 
     const getSimpleResult = createGetSimpleResult(
@@ -269,16 +302,13 @@ const getSimpleResultFunction = (input) => {
             ? simpleResult
             : {
                 ...simpleResult,
-                datePosted: true,
                 isZillowOwned: true,
                 priceHistory: true,
-                zpid: true,
                 isPremierBuilder: true,
                 primaryPublicVideo: true,
                 tourViewCount: true,
                 postingContact: true,
                 unassistedShowing: true,
-                homeType: true,
                 comingSoonOnMarketDate: true,
                 timeZone: true,
                 newConstructionType: true,
@@ -286,10 +316,6 @@ const getSimpleResultFunction = (input) => {
                 moveInCompletionDate: true,
                 lastSoldPrice: true,
                 contingentListingType: true,
-                zestimate: true,
-                zestimateLowPercent: true,
-                zestimateHighPercent: true,
-                rentZestimate: true,
                 restimateLowPercent: true,
                 restimateHighPercent: true,
                 solarPotential: true,
@@ -304,7 +330,6 @@ const getSimpleResultFunction = (input) => {
                 building: true,
                 priceChange: true,
                 datePriceChanged: true,
-                dateSold: true,
                 lotSize: true,
                 hoaFee: true,
                 mortgageRates: true,
@@ -323,7 +348,6 @@ const getSimpleResultFunction = (input) => {
                 isRecentStatusChange: true,
                 isNonOwnerOccupied: true,
                 buildingId: true,
-                daysOnZillow: true,
                 rentalApplicationsAcceptedType: true,
                 buildingPermits: true,
                 highlights: true,
