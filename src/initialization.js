@@ -131,12 +131,21 @@ Check if your start urls match the desired home status.`);
     }
 
     if (input.zpids?.length) {
+        const zpids = Array.from(new Set(input.zpids.map(fns.normalizeZpid).filter(Boolean)));
+
+        if (!zpids.length) {
+            log.warning(`"zpids" array option was provided, but no valid zpid found out of ${input.zpids.length} items`);
+            return;
+        }
+
+        log.info(`Added ${zpids.length} zpids from input`);
+
         await rq.addRequest({
             url: 'https://www.zillow.com/',
             uniqueKey: 'ZPIDS',
             userData: {
                 label: LABELS.ZPIDS,
-                zpids: Array.from(input.zpids.filter((value) => /^\d+$/.test(value))),
+                zpids,
             },
         }, { forefront: true });
     }
