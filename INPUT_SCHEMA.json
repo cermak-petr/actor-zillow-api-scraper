@@ -36,6 +36,7 @@
             "type": "integer",
             "minimum": 0,
             "prefill": 200,
+            "default": 200,
             "description": "Limit of home detail pages to be scraped"
         },
         "simple": {
@@ -68,8 +69,8 @@
             "title": "Max zoom level",
             "type": "integer",
             "minimum": 0,
-            "prefill": 5,
-            "default": 0,
+            "prefill": 1,
+            "default": 1,
             "description": "Maximum map splitting level. The bigger number is set, the longer the scrape will take",
             "sectionCaption": "Other filters (zoom level, dates)"
         },

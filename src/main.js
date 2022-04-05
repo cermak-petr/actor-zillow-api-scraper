@@ -51,28 +51,17 @@ Apify.main(async () => {
 
     const getSimpleResult = getSimpleResultFunction(input);
 
-    /** @type {any} */
-    const zpidsValues = await Apify.getValue('STATE');
-    const zpids = new Set(zpidsValues);
-
     /**
      * @type {{
-     *   zpids: Set<string>,
+     *   zpidsHandler: fns.ZpidHandler,
      *   input: PageHandler['globalContext']['input'],
      *   crawler: Apify.PuppeteerCrawler,
      * }}
      */
     const globalContext = {
-        zpids,
+        zpidsHandler: await fns.createZpidsHandler(input.maxItems ?? 200),
         input,
     };
-
-    const persistState = async () => {
-        await Apify.setValue('STATE', [...zpids.values()]);
-    };
-
-    Apify.events.on('aborting', persistState);
-    Apify.events.on('migrating', persistState);
 
     const requestQueue = await Apify.openRequestQueue();
     const loadQueue = getInitializedStartUrls(input, requestQueue);
@@ -101,10 +90,6 @@ Apify.main(async () => {
         }, { forefront: true });
     }
 
-    const isOverItems = (extra = 0) => (typeof input.maxItems === 'number' && input.maxItems > 0
-        ? (globalContext.zpids.size + extra) >= input.maxItems
-        : false);
-
     const extendOutputFunction = await getExtendOutputFunction(globalContext, minMaxDate, getSimpleResult);
 
     const extendScraperFunction = await extendFunction({
@@ -121,7 +106,7 @@ Apify.main(async () => {
                 return queryZpid;
             },
             getSimpleResult,
-            zpids: globalContext.zpids,
+            zpidsHandler: globalContext.zpidsHandler,
             fns,
             extendOutputFunction,
             minMaxDate,
@@ -181,7 +166,7 @@ Apify.main(async () => {
             : input.handlePageTimeoutSecs || 3600,
         useSessionPool: true,
         sessionPoolOptions: {
-            maxPoolSize: 10,
+            maxPoolSize: 30,
             sessionOptions: {
                 maxErrorScore: 0.5,
             },
@@ -226,7 +211,7 @@ Apify.main(async () => {
                 }
             } catch (e) {}
 
-            if (isOverItems() && !isFinishing) {
+            if (globalContext.zpidsHandler.isOverItems() && !isFinishing) {
                 isFinishing = true;
                 try {
                     log.info('Reached maximum items, waiting for finish');
@@ -246,7 +231,7 @@ Apify.main(async () => {
             const { page, request, session, response } = context;
             const pageHandler = new PageHandler(context, globalContext, extendOutputFunction);
 
-            if (!response || pageHandler.isOverItems()) {
+            if (!response || globalContext.zpidsHandler.isOverItems()) {
                 if (!response) {
                     throw new Error('No response from page');
                 }
@@ -308,5 +293,5 @@ Apify.main(async () => {
         throw new Error('The selected proxy group seems to be blocked, try a different one or contact Apify on Intercom');
     }
 
-    log.info(`Done with ${globalContext.zpids.size} listings!`);
+    log.info(`Done with ${globalContext.zpidsHandler.count} listings!`);
 });

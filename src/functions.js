@@ -113,6 +113,91 @@ const translateFilterToQs = (filter) => {
 };
 
 /**
+ * @param {number | string | null | undefined} zpid
+ */
+const normalizeZpid = (zpid) => {
+    // empty string, 0, null, etc
+    if (!zpid) {
+        return;
+    }
+
+    // zpids are numbers, and sometimes are strings. they should be the same when converting
+    // some zpids are invalid, like 30.213--51.251. casting + makes it NaN
+    if (zpid != +zpid) {
+        return;
+    }
+
+    return `${zpid}`;
+};
+
+/**
+ * Deals with normalizing and keeping track of zpids to avoid
+ * duplicates and extra work
+ *
+ * @param {number} [maxItems]
+ */
+const createZpidsHandler = async (maxItems) => {
+    /** @type {Set<string>} */
+    const zpids = new Set(await Apify.getValue('STATE'));
+
+    maxItems = maxItems ? +maxItems : 0;
+
+    const persistState = async () => {
+        await Apify.setValue('STATE', [...zpids.values()]);
+    };
+
+    Apify.events.on('aborting', persistState);
+    Apify.events.on('migrating', persistState);
+
+    return {
+        /** @param {number} [extra] */
+        isOverItems(extra = 0) {
+            return maxItems > 0
+                ? zpids.size + extra >= +maxItems
+                : false;
+        },
+        get count() {
+            return zpids.size;
+        },
+        /**
+         * @param {number | undefined | string} zpid
+         */
+        has(zpid) {
+            zpid = normalizeZpid(zpid);
+
+            if (!zpid) {
+                return false;
+            }
+
+            return zpids.has(zpid);
+        },
+        /**
+         * @param {number | undefined | string} zpid
+         * @returns zpid was added to the global store
+         */
+        add(zpid, key = 'DEFAULT') {
+            zpid = normalizeZpid(zpid);
+
+            if (!zpid) {
+                return false;
+            }
+
+            if (zpids.has(zpid)) {
+                return false;
+            }
+
+            zpids.add(zpid);
+
+            return true;
+        },
+    };
+};
+
+/**
+ * @typedef {Awaited<ReturnType<typeof createZpidsHandler>>} ZpidHandler
+ */
+
+/**
  * @param {Record<string,any>} input
  */
 const makeInputBackwardsCompatible = (input) => {
@@ -301,15 +386,15 @@ const splitQueryState = (queryState) => {
     });
 
     grid.features.forEach(({ geometry }) => {
-        const b = bbox(geometry);
+        const [west, south, east, north] = bbox(geometry);
 
         states.push({
             ...qs,
             mapBounds: {
-                west: b[0],
-                south: b[1],
-                east: b[2],
-                north: b[3],
+                west,
+                south,
+                east,
+                north,
             },
             // eslint-disable-next-line no-nested-ternary
             mapZoom: qs.mapZoom
@@ -614,11 +699,11 @@ const getUrlData = (url) => {
     const nUrl = new URL(url, ORIGIN);
 
     if (/\/\d+_zpid/.test(nUrl.pathname) || nUrl.pathname.startsWith('/b/')) {
-        const zpid = nUrl.pathname.match(/\/(\d+)_zpid/);
+        const zpid = normalizeZpid(nUrl.pathname.match(/\/(\d+)_zpid/)?.[1]);
 
         return {
             label: LABELS.DETAIL,
-            zpid: +zpid?.[1] || '',
+            zpid,
         };
     }
 
@@ -629,17 +714,7 @@ const getUrlData = (url) => {
         };
     }
 
-    if (nUrl.pathname.startsWith('/homes')) {
-        return {
-            label: LABELS.QUERY,
-        };
-    }
-
-    if (nUrl.pathname.match(/\/(fsbo|rent|sale|sold)\/?/)) {
-        throw new Error(`\n\nThe url provided "${nUrl.toString()}" isn't supported. Use a proper listing url containing a searchQueryState parameter\n\n`);
-    }
-
-    throw new Error(`The URL could not be categorized: ${nUrl.toString()}`);
+    throw new Error(`\n\n\n\nThe url provided "${nUrl.toString()}" isn't supported. Use a proper listing url containing a ?searchQueryState= parameter\n\n\n\n`);
 };
 
 /**
@@ -880,20 +955,6 @@ const patchLog = (crawler) => {
     };
 };
 
-/**
- * @param {{
- *  zpids: Set<any>,
- *  input: { maxItems: Number},
- * }} globalContext
- * @param {Number} extra
- * @returns is over items bool result
- */
-const isOverItems = ({ zpids, input }, extra = 0) => {
-    return typeof input.maxItems === 'number' && input.maxItems > 0
-        ? zpids.size + extra >= input.maxItems
-        : false;
-};
-
 module.exports = {
     createGetSimpleResult,
     createQueryZpid,
@@ -908,7 +969,8 @@ module.exports = {
     minMaxDates,
     patchLog,
     changeHandlePageTimeout,
-    isOverItems,
+    createZpidsHandler,
+    normalizeZpid,
     translateFilterToQs,
     getUniqueKeyFromQueryState,
 };

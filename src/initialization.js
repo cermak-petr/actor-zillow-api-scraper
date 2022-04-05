@@ -8,7 +8,6 @@ const { utils: { log } } = Apify;
 const {
     getUrlData,
     extendFunction,
-    isOverItems,
     // eslint-disable-next-line no-unused-vars
     createGetSimpleResult,
 } = fns;
@@ -192,17 +191,16 @@ const initializePreLaunchHooks = (input) => {
 /**
  *
  * @param {{
- *  zpids: Set<string>,
+ *  zpidsHandler: fns.ZpidHandler,
  *  input: {
  *      rawOutput: boolean,
- *      maxItems: number,
  *      type: string
  *  },
  * }} globalContext
  * @param {*} minMaxDate
  * @param {ReturnType<createGetSimpleResult>} getSimpleResult
  */
-const getExtendOutputFunction = async ({ zpids, input }, minMaxDate, getSimpleResult) => {
+const getExtendOutputFunction = async ({ zpidsHandler, input }, minMaxDate, getSimpleResult) => {
     const extendOutputFunction = await extendFunction({
         map: async (data) => {
             if (input.rawOutput === true) {
@@ -211,8 +209,8 @@ const getExtendOutputFunction = async ({ zpids, input }, minMaxDate, getSimpleRe
 
             return getSimpleResult(data);
         },
-        filter: async ({ data }, { request }) => {
-            if (isOverItems({ zpids, input })) {
+        filter: async ({ data }) => {
+            if (zpidsHandler.isOverItems()) {
                 return false;
             }
 
@@ -220,7 +218,7 @@ const getExtendOutputFunction = async ({ zpids, input }, minMaxDate, getSimpleRe
                 return false;
             }
 
-            if (zpids.has(`${data.zpid}`)) {
+            if (zpidsHandler.has(data.zpid)) {
                 return false;
             }
 
@@ -245,8 +243,7 @@ const getExtendOutputFunction = async ({ zpids, input }, minMaxDate, getSimpleRe
             }
         },
         output: async (output, { data }) => {
-            if (data.zpid && !isOverItems({ zpids, input })) {
-                zpids.add(`${data.zpid}`);
+            if (!zpidsHandler.isOverItems() && zpidsHandler.add(data.zpid)) {
                 await Apify.pushData(output);
             }
         },
@@ -255,7 +252,7 @@ const getExtendOutputFunction = async ({ zpids, input }, minMaxDate, getSimpleRe
         helpers: {
             getUrlData,
             getSimpleResult,
-            zpids,
+            zpidsHandler,
             minMaxDate,
             TYPES,
             fns,

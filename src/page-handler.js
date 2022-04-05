@@ -35,7 +35,7 @@ class PageHandler {
      *  response: any,
      *  proxyInfo: Apify.ProxyInfo }} context
      * @param {{
-     *  zpids: Set<any>,
+     *  zpidsHandler: fns.ZpidHandler,
      *  input: {
      *      maxItems: number,
      *      maxLevel: number,
@@ -51,11 +51,11 @@ class PageHandler {
      * }} globalContext
      * @param {*} extendOutputFunction
      */
-    constructor({ page, request, crawler, session, proxyInfo }, { zpids, input }, extendOutputFunction) {
+    constructor({ page, request, crawler, session, proxyInfo }, { zpidsHandler, input }, extendOutputFunction) {
         const { requestQueue, autoscaledPool } = crawler;
 
         this.context = { page, request, requestQueue, autoscaledPool, session, proxyInfo };
-        this.globalContext = { zpids, input, crawler };
+        this.globalContext = { zpidsHandler, input, crawler };
         this.extendOutputFunction = extendOutputFunction;
 
         this.anyErrors = false;
@@ -134,7 +134,9 @@ class PageHandler {
     }
 
     async handleDetailPage() {
-        if (this.isOverItems()) {
+        const { isOverItems } = this.globalContext.zpidsHandler;
+
+        if (isOverItems()) {
             return;
         }
 
@@ -151,7 +153,7 @@ class PageHandler {
             }
 
             // legacy layout, need re-enqueue
-            const zpid = nextData?.props?.initialData?.building?.zpid;
+            const zpid = fns.normalizeZpid(nextData?.props?.initialData?.building?.zpid);
 
             if (zpid) {
                 const zpidUrl = `https://www.zillow.com/homedetails/${zpid}_zpid/`;
@@ -160,7 +162,7 @@ class PageHandler {
                     url: zpidUrl,
                     userData: {
                         label: LABELS.DETAIL,
-                        zpid: +zpid,
+                        zpid,
                     },
                     uniqueKey: zpid || zpidUrl,
                 });
@@ -240,9 +242,10 @@ class PageHandler {
      * @param {string} hash
      */
     async _addZpidsRequest(zpids, url, hash) {
+        const { isOverItems } = this.globalContext.zpidsHandler;
         const { requestQueue } = this.context;
 
-        if (this.isOverItems()) {
+        if (isOverItems()) {
             return;
         }
 
@@ -331,27 +334,29 @@ class PageHandler {
 
     /**
      *
-     * @param {string} zpid
+     * @param {string | null | undefined} zpid
      * @param {string} detailUrl
      * @param {ReturnType<typeof createQueryZpid>} queryZpid
      * @param {boolean} relaxed Relaxed results are incomplete, so needs full page load
      */
     async processZpid(zpid, detailUrl, queryZpid, relaxed = false) {
         const { page, request, requestQueue, session } = this.context;
-        const { zpids } = this.globalContext;
+        const { isOverItems, has } = this.globalContext.zpidsHandler;
 
-        if (this.isOverItems()) {
+        if (isOverItems()) {
             return;
         }
 
+        const normalizedZpid = fns.normalizeZpid(zpid);
+
         const enqueueZpid = () => requestQueue.addRequest({
-            url: new URL(detailUrl || `/homedetails/${zpid}_zpid/`, ORIGIN).toString(),
+            url: new URL(detailUrl || `/homedetails/${normalizedZpid}_zpid/`, ORIGIN).toString(),
             userData: {
                 label: LABELS.DETAIL,
-                zpid: +zpid,
+                zpid: normalizedZpid,
             },
-            uniqueKey: zpid || detailUrl,
-        });
+            uniqueKey: normalizedZpid || detailUrl,
+        }, { forefront: true });
 
         if (relaxed) {
             log.debug('Enqueuing relaxed zpid', { zpid });
@@ -363,17 +368,15 @@ class PageHandler {
         let noWait = false;
 
         try {
-            if (!zpid) {
-                throw new Error(notZpid);
-            }
-
-            if (+zpid != zpid) {
-                throw new Error(invalidNonNumeric);
-            }
-
-            if (zpids.has(`${zpid}`)) {
+            if (!normalizedZpid) {
                 noWait = true;
-                log.debug(`Zpids already contain zpid ${zpid}, going for next parse`);
+                log.debug('Invalid zpid', { zpid });
+                return;
+            }
+
+            if (has(normalizedZpid)) {
+                noWait = true;
+                log.debug(`Zpids already contain zpid ${normalizedZpid}, going for next parse`);
                 return;
             }
 
@@ -381,18 +384,18 @@ class PageHandler {
                 throw new Error('Not trying to retrieve data, session is not usable anymore');
             }
 
-            log.debug(`Extracting ${zpid}`);
+            log.debug(`Extracting ${normalizedZpid}`);
 
             await this.extendOutputFunction(
-                JSON.parse(await queryZpid(page, zpid)).data.property,
+                JSON.parse(await queryZpid(page, normalizedZpid)).data.property,
                 {
                     request,
                     page,
-                    zpid,
+                    zpid: normalizedZpid,
                 },
             );
         } catch (e) {
-            if (this.isOverItems()) {
+            if (isOverItems()) {
                 return;
             }
 
@@ -414,14 +417,6 @@ class PageHandler {
                 await sleep(100);
             }
         }
-    }
-
-    isOverItems(extra = 0) {
-        const { zpids, input } = this.globalContext;
-
-        return typeof input.maxItems === 'number' && input.maxItems > 0
-            ? zpids.size + extra >= input.maxItems
-            : false;
     }
 
     foundAnyErrors() {
@@ -513,7 +508,7 @@ class PageHandler {
      * @returns array of list results and map results for cat1 and cat2 merged
      */
     _getMergedSearchResults(pageQs) {
-        const { zpids, input: { includeRelaxedResults = true } } = this.globalContext;
+        const { zpidsHandler: { has }, input: { includeRelaxedResults = true } } = this.globalContext;
         const set = new Set();
         /** @type {Array<ZpidResult>} */
         const results = [];
@@ -531,14 +526,12 @@ class PageHandler {
                 ] : [],
             )
                 .map(({ zpid, detailUrl, relaxed }) => ({
-                    zpid: `${zpid}`,
+                    zpid,
                     detailUrl: detailUrl || '',
                     relaxed: relaxed || false,
                 }))
                 .filter((s) => {
-                    return !!s.zpid
-                        && +s.zpid == s.zpid
-                        && !zpids.has(`${s.zpid}`);
+                    return !has(s.zpid);
                 })
                 .forEach((item) => {
                     set.add(`${item.zpid}`);
@@ -628,11 +621,11 @@ class PageHandler {
      */
     async _tryEnqueueMapSplits(queryState) {
         const { request } = this.context;
-        const { input } = this.globalContext;
+        const { input, zpidsHandler: { isOverItems } } = this.globalContext;
 
-        const maxLevel = input.maxLevel ?? 0;
+        const maxLevel = input.maxLevel ?? 1;
 
-        if (this.isOverItems() || maxLevel === 0) {
+        if (isOverItems() || maxLevel === 0) {
             log.debug('Not trying to enqueue map splits');
             return;
         }
@@ -644,7 +637,7 @@ class PageHandler {
         } else {
             const splits = splitQueryState(queryState);
             const splitCount = currentSplitCount + 1;
-            log.info(`Splitting map into ${splits.length} squares and zooming in, ${splitCount} splits`);
+            log.info(`Splitting map into ${splits.length} squares and zooming in, ${currentSplitCount} splits done so far`);
             await this._enqueueMapSplits(splits, splitCount);
         }
     }
@@ -659,8 +652,9 @@ class PageHandler {
     async _tryEnqueuePaginationPages(searchQueryState) {
         const { requestQueue, page, request } = this.context;
         const { ignoreFilter, pageNumber } = request.userData;
+        const { isOverItems } = this.globalContext.zpidsHandler;
 
-        if (this.isOverItems() || +pageNumber) {
+        if (isOverItems() || +pageNumber) {
             return;
         }
 
@@ -702,9 +696,10 @@ class PageHandler {
     async _enqueueMapSplits(splits, splitCount) {
         const { requestQueue, page, request } = this.context;
         const { ignoreFilter } = request.userData;
+        const { isOverItems } = this.globalContext.zpidsHandler;
 
         for (const searchQueryState of splits) {
-            if (this.isOverItems()) {
+            if (isOverItems()) {
                 break;
             }
 
@@ -739,14 +734,14 @@ class PageHandler {
     }
 
     startCounter() {
-        const { zpids } = this.globalContext;
+        const { zpidsHandler } = this.globalContext;
 
         let lastCount = 0;
 
         const extracted = () => {
-            if (zpids.size !== lastCount) {
-                lastCount = zpids.size;
-                log.info(`Extracted total ${zpids.size}`);
+            if (zpidsHandler.count !== lastCount) {
+                lastCount = zpidsHandler.count;
+                log.info(`Extracted total ${lastCount}`);
             }
         };
 
@@ -768,7 +763,9 @@ class PageHandler {
      * @param {ReturnType<typeof createQueryZpid>} queryZpid
      */
     async _extractZpidsFromResults(results, queryZpid) {
-        if (this.isOverItems()) {
+        const { isOverItems } = this.globalContext.zpidsHandler;
+
+        if (isOverItems()) {
             return;
         }
 
@@ -784,7 +781,7 @@ class PageHandler {
                     if (zpid) {
                         await this.processZpid(zpid, detailUrl, queryZpid, relaxed);
 
-                        if (this.isOverItems()) {
+                        if (isOverItems()) {
                             break; // optimize runtime
                         }
                     }
