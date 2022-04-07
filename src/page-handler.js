@@ -308,7 +308,7 @@ class PageHandler {
 
             log.info(`[${merged.title}]: ${merged.results.length}/${merged.categoryTotals} (this number is an approximation)`);
 
-            if (!merged.zeroResultsFilter) {
+            if (!merged.zeroResultsFilter && (merged.categoryTotals + merged.results.length) >= 500) {
                 await Promise.allSettled([
                     this._tryEnqueueMapSplits(queryState),
                     this._tryEnqueuePaginationPages(queryState),
@@ -623,10 +623,10 @@ class PageHandler {
         const { request } = this.context;
         const { input, zpidsHandler: { isOverItems } } = this.globalContext;
 
-        const maxLevel = input.maxLevel ?? 1;
+        const maxLevel = input.maxLevel ?? 0;
 
         if (isOverItems() || maxLevel === 0) {
-            log.debug('Not trying to enqueue map splits');
+            log.debug('Not trying to enqueue map splits', queryState);
             return;
         }
 
@@ -655,6 +655,7 @@ class PageHandler {
         const { isOverItems } = this.globalContext.zpidsHandler;
 
         if (isOverItems() || +pageNumber) {
+            log.debug('Skipping pages', searchQueryState);
             return;
         }
 
