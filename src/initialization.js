@@ -14,7 +14,7 @@ const {
 
 /**
  * Throws error if the provided input is invalid.
- * @param {{ search: String, startUrls: any[], zpids: any[], zipcodes: any[] }} input
+ * @param {{ search: String, startUrls: any[], zpids: any[], zipcodes: any[], maxLevel: number }} input
  */
 const validateInput = (input) => {
     if (!(input.search && input.search.trim().length > 0)
@@ -23,6 +23,10 @@ const validateInput = (input) => {
         && !(input.zipcodes?.length)
     ) {
         throw new Error('Either "search", "startUrls", "zipcodes" or "zpids" attribute has to be set!');
+    }
+
+    if (input.maxLevel >= 2) {
+        log.warning(`\n===========================\n\n\n\nYou're using "Max zoom level" with a value of ${input.maxLevel}. The usual setting should be 1 or 0. Keeping this setting can take a very long time to complete.\n\n\n\n===========================`);
     }
 };
 
