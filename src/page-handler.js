@@ -659,6 +659,8 @@ class PageHandler {
             return;
         }
 
+        const { splitCount } = request.userData;
+
         const url = new URL(page.url());
         url.pathname = url.pathname === '/' ? '/homes/' : url.pathname;
 
@@ -683,6 +685,7 @@ class PageHandler {
                     label: LABELS.QUERY,
                     ignoreFilter,
                     pageNumber: i,
+                    splitCount,
                 },
                 uniqueKey,
             });

@@ -802,6 +802,7 @@ const extendFunction = async ({
                 lineOffset: 0,
                 produceCachedData: false,
                 displayErrors: true,
+                timeout: 1000,
                 filename: `${key}.js`,
             });
         } catch (e) {
@@ -857,12 +858,16 @@ const extendFunction = async ({
  * yesterday and today.
  * Parses unix timestamps in milliseconds and absolute dates in ISO format
  *
- * @param {string} value
+ * @param {string|number|Date} value
  * @param {boolean} inTheFuture
  */
 const parseTimeUnit = (value, inTheFuture) => {
     if (!value) {
         return null;
+    }
+
+    if (value instanceof Date) {
+        return moment.utc(value);
     }
 
     switch (value) {
@@ -875,21 +880,29 @@ const parseTimeUnit = (value, inTheFuture) => {
                 : startDate.startOf('day');
         }
         default: {
-            const [, number, unit] = `${value}`.match(/^(\d+)\s?(minute|second|day|hour|month|year|week)s?$/i) || [];
-
-            if (+number && unit) {
-                return moment.utc().subtract(+number, unit);
-            }
-
             // valid integer, needs to be typecast into a number
             // non-milliseconds needs to be converted to milliseconds
             if (+value == value) {
-                return moment.utc(+value % 1000 === 0 ? +value : +value * 1000);
+                return moment.utc(+value / 1e10 < 1 ? +value * 1000 : +value, true);
+            }
+
+            const [, number, unit] = `${value}`.match(/^(\d+)\s?(minute|second|day|hour|month|year|week)s?$/i) || [];
+
+            if (+number && unit) {
+                return inTheFuture
+                    ? moment.utc().add(+number, unit)
+                    : moment.utc().subtract(+number, unit);
             }
         }
     }
 
-    return moment.utc(value);
+    const date = moment.utc(value);
+
+    if (!date.isValid()) {
+        return null;
+    }
+
+    return date;
 };
 
 /**
