@@ -17,7 +17,6 @@ const fns = require('./functions');
 
 const {
     createQueryZpid,
-    interceptQueryId,
     extractQueryStates,
     splitQueryState,
 } = fns;
@@ -47,11 +46,10 @@ class PageHandler {
      *      includeRelaxedResults: boolean,
      *      zpids: any[],
      *  },
-     *  crawler: Apify.PuppeteerCrawler,
      * }} globalContext
      * @param {*} extendOutputFunction
      */
-    constructor({ page, request, crawler, session, proxyInfo }, { zpidsHandler, input }, extendOutputFunction) {
+    constructor({ page, request, crawler, session, proxyInfo }, { zpidsHandler, input }, extendOutputFunction, doIntercept = false) {
         const { requestQueue, autoscaledPool } = crawler;
 
         this.context = { page, request, requestQueue, autoscaledPool, session, proxyInfo };
@@ -61,6 +59,7 @@ class PageHandler {
         this.anyErrors = false;
 
         this.pendingPromise = this.getResponse(page);
+        this.pendingIntercept = this.interceptQueryId(page, doIntercept);
     }
 
     /**
@@ -90,24 +89,57 @@ class PageHandler {
     }
 
     /**
+     * Intercept home data API request and extract it's QueryID
+     * @param {Puppeteer.Page} page
+     */
+    async interceptQueryId(page, doIntercept = false) {
+        if (!doIntercept) {
+            return;
+        }
+
+        try {
+            const res = await page.waitForResponse(async (req) => {
+                return req.url().includes('variants-');
+            }, { timeout: 30000 });
+
+            if (!res.ok()) {
+                throw new Error(`waitForResponse ${res.status()}`);
+            }
+
+            log.debug(`Found response`);
+
+            const scriptContent = await res.text();
+
+            return {
+                queryId: scriptContent.match(/ForSaleDoubleScrollFullRenderQuery:"([^"]+)"/)?.[1],
+                clientVersion: scriptContent.match(/clientVersion:"([^"]+)"/)?.[1],
+            };
+        } catch (e) {
+            log.debug(`interceptQueryId error ${e.message}`);
+
+            throw new Error('Failed to get queryId');
+        }
+    }
+
+    /**
      * @param {ReturnType<typeof createQueryZpid> | null} queryZpid
      * @param {() => Promise<void>} loadQueue
      * @returns {Promise<queryZpid>}
      */
     async handleInitialPage(queryZpid, loadQueue) {
         const { crawler, input } = this.globalContext;
-        const { page, proxyInfo, autoscaledPool, session } = this.context;
+        const { autoscaledPool, session } = this.context;
 
         try {
-            log.info('Trying to get queryId...');
-
-            const { queryId, clientVersion } = await interceptQueryId(page, proxyInfo);
-
-            if (!queryId || !clientVersion) {
-                throw new Error('queryId unavailable');
-            }
-
             if (!queryZpid) {
+                log.info('Trying to get queryId...');
+
+                const { queryId, clientVersion } = await this.pendingIntercept;
+
+                if (!queryId || !clientVersion) {
+                    throw new Error('queryId unavailable');
+                }
+
                 // avoid a racing condition here because of interceptQueryId being stuck forever or for a long time
                 log.debug('Intercepted queryId', { queryId, clientVersion });
 

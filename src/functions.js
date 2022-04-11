@@ -4,7 +4,6 @@ const Puppeteer = require('puppeteer'); // eslint-disable-line no-unused-vars
 const { createHash } = require('crypto');
 const vm = require('vm');
 const { bboxPolygon, bbox, area, squareGrid } = require('@turf/turf');
-const { gotScraping } = require('got-scraping');
 const { LABELS, TYPES, ORIGIN, GetSearchPageState, SearchQueryState } = require('./constants'); // eslint-disable-line no-unused-vars
 
 const { log } = Apify.utils;
@@ -134,13 +133,14 @@ const normalizeZpid = (zpid) => {
  * Deals with normalizing and keeping track of zpids to avoid
  * duplicates and extra work
  *
- * @param {number} [maxItems]
+ * @param {number} maxItems
  */
 const createZpidsHandler = async (maxItems) => {
     /** @type {Set<string>} */
     const zpids = new Set(await Apify.getValue('STATE'));
 
-    maxItems = maxItems ? +maxItems : 0;
+    maxItems = +maxItems ? +maxItems : 0;
+    const initialCount = zpids.size;
 
     const persistState = async () => {
         await Apify.setValue('STATE', [...zpids.values()]);
@@ -150,10 +150,11 @@ const createZpidsHandler = async (maxItems) => {
     Apify.events.on('migrating', persistState);
 
     return {
+        persistState,
         /** @param {number} [extra] */
         isOverItems(extra = 0) {
             return maxItems > 0
-                ? zpids.size + extra >= +maxItems
+                ? zpids.size + initialCount + extra >= +maxItems
                 : false;
         },
         get count() {
@@ -300,52 +301,6 @@ const changeHandlePageTimeout = (crawler, handlePageTimeoutSecs) => {
         crawler.handlePageTimeoutSecs = handlePageTimeoutSecs;
         crawler.handlePageTimeoutMillis = handlePageTimeoutSecs * 1000;
         crawler.handleRequestTimeoutMillis = crawler.handlePageTimeoutMillis;
-    }
-};
-
-/**
- * Intercept home data API request and extract it's QueryID
- * @param {Puppeteer.Page} page
- * @param {Apify.ProxyInfo} proxy
- */
-const interceptQueryId = async (page, proxy) => {
-    await page.waitForFunction(() => {
-        return [...document.scripts].some((s) => s.src.includes('variants-'));
-    });
-
-    const src = await page.evaluate(async () => {
-        return [...document.scripts].find((s) => s.src.includes('variants-'))?.src;
-    });
-
-    try {
-        if (!src) {
-            throw new Error('src is missing');
-        }
-
-        const response = await gotScraping({
-            url: src,
-            proxyUrl: proxy.url,
-            responseType: 'text',
-        });
-
-        if (!response) {
-            throw new Error('Response is empty');
-        }
-
-        if (![200, 304, 301, 302].includes(response.statusCode)) {
-            throw new Error(`Status code ${response.statusCode}`);
-        }
-
-        const scriptContent = response.body;
-
-        return {
-            queryId: scriptContent.match(/ForSaleDoubleScrollFullRenderQuery:"([^"]+)"/)?.[1],
-            clientVersion: scriptContent.match(/clientVersion:"([^"]+)"/)?.[1],
-        };
-    } catch (e) {
-        log.debug(`interceptQueryId error ${e.message}`, { src });
-
-        throw new Error('Failed to get queryId');
     }
 };
 
@@ -614,13 +569,12 @@ const evaluateQueryZpid = async ({ zpid, queryId, clientVersion }) => {
     const resp = await fetch(`https://www.zillow.com/graphql/?zpid=${zpid}&contactFormRenderParameter=&queryId=${queryId}&operationName=ForSaleDoubleScrollFullRenderQuery`, {
         method: 'POST',
         body,
+        referrerPolicy: 'no-referrer',
         headers: {
             dnt: '1',
             accept: '*/*',
             'content-type': 'text/plain',
-            origin: document.location.origin,
             pragma: 'no-cache',
-            referer: `${document.location.origin}/`,
         },
         mode: 'cors',
         credentials: 'include',
@@ -711,6 +665,12 @@ const getUrlData = (url) => {
         return {
             label: LABELS.QUERY,
             ignoreFilter: true,
+        };
+    }
+
+    if (nUrl.pathname.includes('_rb/')) {
+        return {
+            label: LABELS.QUERY,
         };
     }
 
@@ -971,7 +931,6 @@ const patchLog = (crawler) => {
 module.exports = {
     createGetSimpleResult,
     createQueryZpid,
-    interceptQueryId,
     extractQueryStates,
     splitQueryState,
     extendFunction,

@@ -38,7 +38,6 @@ const cleanUpUrl = (url) => {
     const nUrl = new URL(url, ORIGIN);
     /** @type {import('./constants').SearchQueryState | null} */
     let searchQueryState = null;
-    nUrl.pathname = '/homes/';
 
     // pagination on the JSON variable
     if (nUrl.searchParams.has('searchQueryState')) {
@@ -53,6 +52,8 @@ const cleanUpUrl = (url) => {
             throw new Error(`The URL ${url} don't have a valid searchQueryState parameter:\n${e.message}`);
         }
     }
+
+    nUrl.pathname = '/homes/';
 
     return {
         url: nUrl,
@@ -129,6 +130,9 @@ Check if your start urls match the desired home status.`);
             await rq.addRequest({
                 url: url.toString(),
                 userData,
+                headers: {
+                    referer: ORIGIN,
+                },
                 uniqueKey: `${userData.zpid || uniqueKey}`,
             });
         }

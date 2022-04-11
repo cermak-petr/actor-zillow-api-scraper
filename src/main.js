@@ -1,5 +1,5 @@
 const Apify = require('apify');
-const { LABELS, INITIAL_URL, URL_PATTERNS_TO_BLOCK } = require('./constants');
+const { LABELS, INITIAL_URL, URL_PATTERNS_TO_BLOCK, ORIGIN } = require('./constants');
 const { PageHandler } = require('./page-handler');
 const {
     getExtendOutputFunction,
@@ -50,6 +50,7 @@ Apify.main(async () => {
     });
 
     const getSimpleResult = getSimpleResultFunction(input);
+    const zpidsHandler = await fns.createZpidsHandler(input.maxItems ?? 200);
 
     /**
      * @type {{
@@ -59,7 +60,7 @@ Apify.main(async () => {
      * }}
      */
     const globalContext = {
-        zpidsHandler: await fns.createZpidsHandler(input.maxItems ?? 200),
+        zpidsHandler,
         input,
     };
 
@@ -84,6 +85,9 @@ Apify.main(async () => {
         await requestQueue.addRequest({
             url: INITIAL_URL,
             uniqueKey: `${Math.random()}`,
+            headers: {
+                referer: ORIGIN,
+            },
             userData: {
                 label: LABELS.INITIAL,
             },
@@ -141,9 +145,9 @@ Apify.main(async () => {
         preLaunchHooks: initializePreLaunchHooks(input),
         fingerprintsOptions: {
             fingerprintGeneratorOptions: {
-                browsers: ['chrome'],
+                browsers: ['chrome', 'firefox'],
                 devices: ['desktop'],
-                locales: ['en-US', 'en'],
+                locales: ['en-US', 'en-GB', 'en'],
             },
         },
         maxOpenPagesPerBrowser: 1,
@@ -229,7 +233,7 @@ Apify.main(async () => {
         maxConcurrency: !queryZpid ? 1 : 10,
         handlePageFunction: async (context) => {
             const { page, request, session, response } = context;
-            const pageHandler = new PageHandler(context, globalContext, extendOutputFunction);
+            const pageHandler = new PageHandler(context, globalContext, extendOutputFunction, !queryZpid);
 
             if (!response || globalContext.zpidsHandler.isOverItems()) {
                 if (!response) {
@@ -287,6 +291,8 @@ Apify.main(async () => {
         label: 'FINISH',
         crawler,
     });
+
+    await zpidsHandler.persistState();
 
     if (!queryZpid) {
         // this usually means the proxy is busted, we need to fail
