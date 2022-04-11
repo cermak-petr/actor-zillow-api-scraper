@@ -117,7 +117,7 @@ class PageHandler {
         } catch (e) {
             log.debug(`interceptQueryId error ${e.message}`);
 
-            throw new Error('Failed to get queryId');
+            return {};
         }
     }
 
