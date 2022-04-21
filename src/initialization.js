@@ -124,16 +124,25 @@ Check if your start urls match the desired home status.`);
                     return fns.getUniqueKeyFromQueryState(searchQueryState);
                 }
 
-                return url;
+                if (userData.zpid) {
+                    return userData.zpid;
+                }
+
+                return url.toString();
             })();
 
             await rq.addRequest({
                 url: url.toString(),
                 userData,
-                headers: {
-                    referer: ORIGIN,
-                },
-                uniqueKey: `${userData.zpid || uniqueKey}`,
+                headers: [
+                    LABELS.ENRICHED_ZPIDS,
+                    LABELS.QUERY,
+                    LABELS.ZPIDS,
+                    LABELS.DETAIL,
+                ].includes(userData.label) ? {
+                        referer: ORIGIN,
+                    } : {},
+                uniqueKey,
             });
         }
     }
@@ -211,7 +220,7 @@ const initializePreLaunchHooks = (input) => {
  *  zpidsHandler: fns.ZpidHandler,
  *  input: {
  *      rawOutput: boolean,
- *      type: string
+ *      type: string,
  *  },
  * }} globalContext
  * @param {*} minMaxDate

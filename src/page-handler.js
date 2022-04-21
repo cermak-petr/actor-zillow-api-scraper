@@ -196,7 +196,7 @@ class PageHandler {
                         label: LABELS.DETAIL,
                         zpid,
                     },
-                    uniqueKey: zpid || zpidUrl,
+                    uniqueKey: zpid,
                 });
 
                 if (!rq.wasAlreadyPresent) {
@@ -232,6 +232,7 @@ class PageHandler {
                         await this.extendOutputFunction(loaded[key].property, {
                             request,
                             page,
+                            pageHandler: this,
                             zpid: request.userData.zpid,
                         });
 
@@ -419,11 +420,12 @@ class PageHandler {
             log.debug(`Extracting ${normalizedZpid}`);
 
             await this.extendOutputFunction(
-                JSON.parse(await queryZpid(page, normalizedZpid)).data.property,
+                JSON.parse(await queryZpid(page, normalizedZpid, detailUrl)).data.property,
                 {
                     request,
                     page,
                     zpid: normalizedZpid,
+                    pageHandler: this,
                 },
             );
         } catch (e) {

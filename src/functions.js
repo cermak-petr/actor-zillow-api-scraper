@@ -444,10 +444,8 @@ const queryRegionHomes = async (params) => {
         headers: {
             accept: '*/*',
         },
-        referrerPolicy: 'no-referrer',
         method: 'GET',
         mode: 'cors',
-        redirect: 'error',
         credentials: 'include',
     });
 
@@ -546,10 +544,12 @@ const extractQueryStates = async (inputType, page, pageQueryState, cb, paginatio
  * @param { {
  *      zpid: any,
  *      queryId: any,
- *      clientVersion: any} } requestParams
+ *      detailUrl: string,
+ *      clientVersion: any
+ * }} requestParams
  * @returns
  */
-const evaluateQueryZpid = async ({ zpid, queryId, clientVersion }) => {
+const evaluateQueryZpid = async ({ zpid, detailUrl, queryId, clientVersion }) => {
     zpid = +zpid || zpid;
 
     const body = JSON.stringify({
@@ -557,25 +557,32 @@ const evaluateQueryZpid = async ({ zpid, queryId, clientVersion }) => {
         variables: {
             zpid,
             contactFormRenderParameter: {
-                zpid,
-                platform: 'desktop',
                 isDoubleScroll: true,
+                platform: 'desktop',
+                zpid,
             },
         },
         clientVersion,
         queryId,
     });
 
+    const clientId = (clientVersion.includes('/')
+        ? clientVersion.split('/', 2)?.filter?.((r) => r.includes('-')).shift()?.concat('_r')
+            .trim()
+        : null) || 'home-details_r';
+
     const resp = await fetch(`https://www.zillow.com/graphql/?zpid=${zpid}&contactFormRenderParameter=&queryId=${queryId}&operationName=ForSaleDoubleScrollFullRenderQuery`, {
         method: 'POST',
         body,
-        referrerPolicy: 'no-referrer',
         headers: {
-            dnt: '1',
+            'client-id': clientId,
             accept: '*/*',
-            'content-type': 'text/plain',
-            pragma: 'no-cache',
+            'content-type': 'application/json',
+            origin: document.location.origin,
         },
+        referrer: document.location.pathname.includes('/homedetails/')
+            ? document.location.href
+            : (detailUrl ? detailUrl : undefined),
         mode: 'cors',
         credentials: 'include',
     });
@@ -592,11 +599,11 @@ const evaluateQueryZpid = async ({ zpid, queryId, clientVersion }) => {
  *
  * @param {string} queryId
  * @param {string} clientVersion
- * @returns {(page: Puppeteer.Page, zpid: string) => Promise<any>}
+ * @returns {(page: Puppeteer.Page, zpid: string, detailUrl: string) => Promise<any>}
  */
-const createQueryZpid = (queryId, clientVersion) => (page, zpid) => {
+const createQueryZpid = (queryId, clientVersion) => (page, zpid, detailUrl) => {
     // evaluateQueryZpid is a separate function to avoid scope variables re-declaration (zpid, queryId, clientVersion)
-    return page.evaluate(evaluateQueryZpid, { zpid, queryId, clientVersion });
+    return page.evaluate(evaluateQueryZpid, { zpid, queryId, clientVersion, detailUrl });
 };
 
 /**
@@ -762,7 +769,6 @@ const extendFunction = async ({
                 lineOffset: 0,
                 produceCachedData: false,
                 displayErrors: true,
-                timeout: 1000,
                 filename: `${key}.js`,
             });
         } catch (e) {

@@ -260,6 +260,7 @@ Apify.main(async () => {
                 page,
                 request,
                 session,
+                pageHandler,
                 processZpid: pageHandler.processZpid,
                 queryZpid,
                 label: 'HANDLE',
