@@ -226,7 +226,7 @@ class PageHandler {
                 const loaded = JSON.parse(JSON.parse(await script.evaluate((/** @type {any} */ s) => s.innerHTML)).apiCache);
 
                 for (const key in loaded) { // eslint-disable-line
-                    if (key.includes('FullRenderQuery') && loaded[key].property) {
+                    if (key.includes('FullRenderQuery') && loaded?.[key]?.property) {
                         log.info(`Extracting data from ${url}`);
 
                         await this.extendOutputFunction(loaded[key].property, {
@@ -241,10 +241,8 @@ class PageHandler {
                     }
                 }
             } catch (/** @type {any} */ e) {
-                if (/(Reference|Type|Syntax)Error/.test(e.message)) {
-                    // this is a faulty extend output function
-                    log.error(`Your Extend Output Function errored:\n\n    ${e.message}\n\n`, { url: page.url() });
-                }
+                // this is a faulty extend output function
+                log.error(`Your Extend Output Function errored:\n\n    ${e.message}\n\n`, { url: page.url() });
                 log.debug(e);
             }
         }
