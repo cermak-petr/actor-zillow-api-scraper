@@ -177,7 +177,7 @@ class PageHandler {
         const url = page.url();
         log.debug(`Scraping ${url}`);
 
-        if (url.includes('/b/') || !+request.userData.zpid) {
+        if (url.includes('/b/') || url.includes('/community/') || !+request.userData.zpid) {
             const nextData = await page.$eval('[id="__NEXT_DATA__"]', (s) => JSON.parse(s.innerHTML));
 
             if (!nextData) {

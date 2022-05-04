@@ -383,15 +383,14 @@ const getQueryFilterStates = (filterState, type) => {
     };
 
     const needed = {
-        sortSelection: { value: 'globalrelevanceex' },
+        sortSelection: { value: 'days' },
         isAllHomes: { value: true },
+        isAuction: { value: false },
     };
 
     const typeFilters = {
         sale: [{
             ...needed,
-            isForRent: { value: false },
-            isRecentlySold: { value: false },
         }],
         fsbo: [{
             ...needed,
@@ -406,7 +405,7 @@ const getQueryFilterStates = (filterState, type) => {
         sold: [{
             ...needed,
             ...rentSoldCommonFilters,
-            isForRent: { value: false },
+            isForSaleByOwner: { value: false },
             isRecentlySold: { value: true },
         }],
         /** @type {Array<any>} */
@@ -480,7 +479,10 @@ const extractQueryStates = async (inputType, page, pageQueryState, cb, paginatio
 
     /** @type {Array<['cat1' | 'cat2', any]>} */
     const configs = [
+        ['cat1', { cat1: ['listResults', 'mapResults'] }],
+        ['cat2', { cat1: ['listResults', 'mapResults'] }],
         ['cat1', { cat1: ['listResults', 'mapResults'], cat2: ['total'] }],
+        ['cat2', { cat2: ['listResults', 'mapResults'], cat1: ['total'] }],
         ['cat2', { cat2: ['listResults', 'mapResults'] }],
     ];
 
@@ -492,7 +494,7 @@ const extractQueryStates = async (inputType, page, pageQueryState, cb, paginatio
                     qs: {
                         ...pageQueryState,
                         filterState,
-                        category: cat,
+                        category: cat === 'cat1' ? undefined : cat,
                         pagination: (paginationPage > 1 ? { currentPage: paginationPage } : {}),
                     },
                     wants,
