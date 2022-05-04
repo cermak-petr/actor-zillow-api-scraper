@@ -480,9 +480,9 @@ const extractQueryStates = async (inputType, page, pageQueryState, cb, paginatio
     /** @type {Array<['cat1' | 'cat2', any]>} */
     const configs = [
         ['cat1', { cat1: ['listResults', 'mapResults'] }],
-        ['cat2', { cat1: ['listResults', 'mapResults'] }],
-        ['cat1', { cat1: ['listResults', 'mapResults'], cat2: ['total'] }],
         ['cat2', { cat2: ['listResults', 'mapResults'], cat1: ['total'] }],
+        ['cat1', { cat1: ['listResults', 'mapResults'], cat2: ['total'] }],
+        ['cat2', { cat1: ['listResults', 'mapResults'] }],
         ['cat2', { cat2: ['listResults', 'mapResults'] }],
     ];
 
